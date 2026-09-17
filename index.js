@@ -1,3 +1,4 @@
+```js
 const {
   Client,
   GatewayIntentBits,
@@ -10,10 +11,6 @@ const {
 
 const fs = require("fs");
 
-// ============================================================
-// FLEASION BOT — PRLNGZZ DOG
-// ============================================================
-
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -23,44 +20,7 @@ const client = new Client({
   ]
 });
 
-const prefix = "--";
-
-// ============================================================
-// SETTINGS
-// ============================================================
-
-const SETTINGS = {
-  // AUTOMOD
-  automod: true,
-  blockInvites: true,
-  blockLinks: false,
-  maxMentions: 5,
-  maxCapsPercent: 75,
-
-  // ANTI-SPAM
-  antiSpam: true,
-  spamMessages: 8,
-  spamWindow: 6000,
-  spamTimeout: 15000,
-
-  // ANTI-RAID
-  antiRaid: true,
-  raidJoinAmount: 5,
-  raidJoinWindow: 10000,
-
-  // BLOCKED WORDS
-  blockedWords: [
-    "nigger",
-    "nigga",
-    "faggot",
-    "retard"
-  ]
-};
-
-// ============================================================
-// DATA STORAGE
-// ============================================================
-
+const PREFIX = "--";
 const DATA_FILE = "./fleasion-data.json";
 
 let data = {
@@ -72,71 +32,41 @@ let data = {
 
 if (fs.existsSync(DATA_FILE)) {
   try {
-    data = JSON.parse(
-      fs.readFileSync(DATA_FILE, "utf8")
-    );
+    data = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
   } catch {
-    console.log("Could not read data file. Creating new data.");
+    console.log("Could not read data file. Using fresh data.");
   }
 }
 
 function saveData() {
   try {
-    fs.writeFileSync(
-      DATA_FILE,
-      JSON.stringify(data, null, 2)
-    );
-  } catch (error) {
-    console.log("Data save error:", error.message);
+    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.log("Could not save data:", err);
   }
 }
-
-// ============================================================
-// MEMORY
-// ============================================================
 
 const spamTracker = new Map();
 const raidTracker = new Map();
 const giveaways = new Map();
 
-// ============================================================
-// HELPERS
-// ============================================================
-
-function getTarget(message, args) {
-  return (
-    message.mentions.members.first() ||
-    message.guild.members.cache.get(args[0])
-  );
-}
-
 function hasPermission(message, permission) {
-  return message.member.permissions.has(permission);
+  return message.member?.permissions.has(permission);
 }
 
-function isStaff(member) {
-  return member.permissions.has(
-    PermissionsBitField.Flags.ManageMessages
-  );
+function getUser(message, arg) {
+  if (!arg) return null;
+
+  const mentioned = message.mentions.members.first();
+  if (mentioned) return mentioned;
+
+  return message.guild?.members.cache.get(arg);
 }
 
-function getWarnings(guildId, userId) {
-  if (!data.warnings[guildId]) {
-    data.warnings[guildId] = {};
-  }
+function parseDuration(input) {
+  if (!input) return null;
 
-  if (!data.warnings[guildId][userId]) {
-    data.warnings[guildId][userId] = [];
-  }
-
-  return data.warnings[guildId][userId];
-}
-
-function durationToMs(text) {
-  if (!text) return null;
-
-  const match = text.match(/^(\d+)(s|m|h|d)$/i);
-
+  const match = input.match(/^(\d+)(s|m|h|d)$/i);
   if (!match) return null;
 
   const amount = Number(match[1]);
@@ -152,326 +82,237 @@ function durationToMs(text) {
   return amount * multipliers[unit];
 }
 
-function cleanText(text) {
-  return text
-    .replace(/@everyone/g, "@\u200beveryone")
-    .replace(/@here/g, "@\u200bhere");
+function formatDuration(ms) {
+  const seconds = Math.floor(ms / 1000);
+
+  if (seconds < 60) return `${seconds}s`;
+
+  const minutes = Math.floor(seconds / 60);
+
+  if (minutes < 60) return `${minutes}m`;
+
+  const hours = Math.floor(minutes / 60);
+
+  if (hours < 24) return `${hours}h`;
+
+  return `${Math.floor(hours / 24)}d`;
 }
 
-// ============================================================
-// READY
-// ============================================================
+/* =========================
+   READY
+========================= */
 
 client.once("ready", () => {
-  console.log("=================================");
-  console.log(`Prlngzz Dog is ONLINE`);
   console.log(`Logged in as ${client.user.tag}`);
-  console.log(`Servers: ${client.guilds.cache.size}`);
-  console.log("=================================");
+
+  client.user.setActivity("Fleasion | --help");
+
+  console.log("Fleasion Bot is online.");
 });
 
-// ============================================================
-// MEMBER JOIN
-// ============================================================
+/* =========================
+   MEMBER JOIN
+========================= */
 
-client.on("guildMemberAdd", async (member) => {
+client.on("guildMemberAdd", async member => {
   const guildId = member.guild.id;
 
-  // ==========================================================
-  // ANTI-RAID
-  // ==========================================================
-
-  if (SETTINGS.antiRaid) {
-    const now = Date.now();
-
-    if (!raidTracker.has(guildId)) {
-      raidTracker.set(guildId, []);
-    }
-
-    const joins = raidTracker.get(guildId);
-
-    joins.push(now);
-
-    while (
-      joins.length &&
-      now - joins[0] > SETTINGS.raidJoinWindow
-    ) {
-      joins.shift();
-    }
-
-    if (joins.length >= SETTINGS.raidJoinAmount) {
-      if (!data.raidMode[guildId]) {
-        data.raidMode[guildId] = true;
-        saveData();
-
-        console.log(
-          `[ANTI-RAID] Raid detected in ${member.guild.name}`
-        );
-
-        try {
-          const owner =
-            await client.users.fetch(
-              member.guild.ownerId
-            );
-
-          await owner.send(
-            `🚨 ANTI-RAID ALERT\n\n` +
-            `Possible raid detected in **${member.guild.name}**.\n` +
-            `${joins.length} members joined within ${SETTINGS.raidJoinWindow / 1000} seconds.\n\n` +
-            `No members were automatically kicked.`
-          );
-        } catch {}
-
-        setTimeout(() => {
-          data.raidMode[guildId] = false;
-          saveData();
-        }, 60000);
-      }
-    }
+  if (!raidTracker.has(guildId)) {
+    raidTracker.set(guildId, []);
   }
 
-  // ==========================================================
-  // WELCOME
-  // ==========================================================
+  const joins = raidTracker.get(guildId);
 
-  const channelId =
-    data.welcomeChannels[guildId];
+  joins.push(Date.now());
 
-  if (!channelId) return;
+  const recentJoins = joins.filter(time => Date.now() - time < 10000);
 
-  const channel =
-    member.guild.channels.cache.get(channelId);
+  raidTracker.set(guildId, recentJoins);
 
-  if (!channel) return;
+  if (recentJoins.length >= 5 && !data.raidMode[guildId]) {
+    data.raidMode[guildId] = true;
+    saveData();
 
-  try {
-    await channel.send(
-      `👋 welcome **${cleanText(member.user.username)}** to **${member.guild.name}**!`
-    );
-  } catch {}
+    try {
+      await member.guild.owner?.send(
+        `🚨 RAID ALERT\n\n5 or more members joined within 10 seconds in **${member.guild.name}**.\n\nRaid mode has been activated for 60 seconds.`
+      );
+    } catch {}
+
+    setTimeout(() => {
+      data.raidMode[guildId] = false;
+      saveData();
+    }, 60000);
+  }
+
+  const welcomeChannelId = data.welcomeChannels[guildId];
+
+  if (welcomeChannelId) {
+    const channel = member.guild.channels.cache.get(welcomeChannelId);
+
+    if (channel) {
+      channel.send(
+        `👋 welcome ${member.user} to **${member.guild.name}**!`
+      ).catch(() => {});
+    }
+  }
 });
 
-// ============================================================
-// MESSAGE CREATE
-// ============================================================
+/* =========================
+   MESSAGE HANDLER
+========================= */
 
-client.on("messageCreate", async (message) => {
-  if (message.author.bot) return;
+client.on("messageCreate", async message => {
   if (!message.guild) return;
+  if (message.author.bot) return;
 
-  const content = message.content;
-  const lower = content.toLowerCase();
+  const content = message.content.trim();
 
-  // ==========================================================
-  // AUTOMOD
-  // ==========================================================
-
-  if (
-    SETTINGS.automod &&
-    !content.startsWith(prefix) &&
-    !isStaff(message.member)
-  ) {
-    let violation = false;
-    let reason = "";
-
-    // BLOCKED WORDS
-    for (const word of SETTINGS.blockedWords) {
-      if (lower.includes(word.toLowerCase())) {
-        violation = true;
-        reason = "blocked word";
-        break;
-      }
-    }
-
-    // DISCORD INVITES
-    if (
-      SETTINGS.blockInvites &&
-      /(discord\.gg|discord\.com\/invite\/)/i.test(content)
-    ) {
-      violation = true;
-      reason = "discord invite";
-    }
-
-    // LINKS
-    if (
-      SETTINGS.blockLinks &&
-      /(https?:\/\/|www\.)/i.test(content)
-    ) {
-      violation = true;
-      reason = "link";
-    }
-
-    // MENTION SPAM
-    if (
-      message.mentions.users.size >=
-      SETTINGS.maxMentions
-    ) {
-      violation = true;
-      reason = "mention spam";
-    }
-
-    // CAPS SPAM
-    const letters =
-      content.replace(/[^a-zA-Z]/g, "");
-
-    if (letters.length >= 8) {
-      const uppercase =
-        letters.replace(/[^A-Z]/g, "").length;
-
-      const percentage =
-        (uppercase / letters.length) * 100;
-
-      if (
-        percentage >=
-        SETTINGS.maxCapsPercent
-      ) {
-        violation = true;
-        reason = "excessive caps";
-      }
-    }
-
-    if (violation) {
-      try {
-        await message.delete();
-      } catch {}
-
-      try {
-        const warning =
-          await message.channel.send(
-            `⚠️ ${message.author}, your message was removed for **${reason}**.`
-          );
-
-        setTimeout(() => {
-          warning.delete().catch(() => {});
-        }, 4000);
-      } catch {}
-
-      return;
-    }
-  }
-
-  // ==========================================================
-  // ANTI-SPAM
-  // ==========================================================
+  /* =========================
+     ANTI-SPAM
+  ========================= */
 
   if (
-    SETTINGS.antiSpam &&
-    !content.startsWith(prefix) &&
-    !isStaff(message.member)
+    !message.member.permissions.has(
+      PermissionsBitField.Flags.ManageMessages
+    ) &&
+    !content.startsWith(PREFIX)
   ) {
-    const key =
-      `${message.guild.id}-${message.author.id}`;
+    const userId = message.author.id;
 
-    const now = Date.now();
-
-    if (!spamTracker.has(key)) {
-      spamTracker.set(key, []);
+    if (!spamTracker.has(userId)) {
+      spamTracker.set(userId, []);
     }
 
-    const messages =
-      spamTracker.get(key);
+    const messages = spamTracker.get(userId);
 
-    messages.push(now);
+    messages.push(Date.now());
 
-    while (
-      messages.length &&
-      now - messages[0] >
-        SETTINGS.spamWindow
-    ) {
-      messages.shift();
-    }
+    const recentMessages = messages.filter(
+      time => Date.now() - time < 6000
+    );
 
-    if (
-      messages.length >=
-      SETTINGS.spamMessages
-    ) {
-      spamTracker.delete(key);
+    spamTracker.set(userId, recentMessages);
+
+    if (recentMessages.length >= 8) {
+      spamTracker.delete(userId);
 
       try {
         await message.member.timeout(
-          SETTINGS.spamTimeout,
-          "Fleasion Anti-Spam"
+          15000,
+          "Anti-spam: 8 messages within 6 seconds"
         );
 
         await message.channel.send(
-          `🚫 **${message.author.tag}** was temporarily muted for spam.`
+          `🛑 ${message.author} has been timed out for **15 seconds** for spamming.`
         );
-      } catch (error) {
-        console.log(
-          "Anti-spam error:",
-          error.message
-        );
-      }
-
-      return;
+      } catch {}
     }
   }
 
-  // ==========================================================
-  // PREFIX
-  // ==========================================================
+  /* =========================
+     AUTOMOD
+  ========================= */
 
-  if (!content.startsWith(prefix)) return;
+  if (
+    !content.startsWith(PREFIX) &&
+    !message.member.permissions.has(
+      PermissionsBitField.Flags.ManageMessages
+    )
+  ) {
+    const inviteRegex =
+      /(discord\.gg\/|discord\.com\/invite\/)/i;
+
+    if (inviteRegex.test(content)) {
+      try {
+        await message.delete();
+
+        await message.channel.send(
+          `🚫 ${message.author}, Discord invites are not allowed here.`
+        );
+      } catch {}
+
+      return;
+    }
+
+    const mentions = message.mentions.users.size;
+
+    if (mentions >= 6) {
+      try {
+        await message.delete();
+
+        await message.channel.send(
+          `🚫 ${message.author}, too many mentions.`
+        );
+      } catch {}
+
+      return;
+    }
+
+    const letters = content.replace(/[^a-zA-Z]/g, "");
+
+    if (letters.length >= 10) {
+      const uppercase = letters.replace(/[^A-Z]/g, "").length;
+      const percentage = uppercase / letters.length * 100;
+
+      if (percentage >= 75) {
+        try {
+          await message.delete();
+
+          await message.channel.send(
+            `🚫 ${message.author}, please don't spam caps.`
+          );
+        } catch {}
+
+        return;
+      }
+    }
+  }
+
+  /* =========================
+     COMMAND CHECK
+  ========================= */
+
+  if (!content.startsWith(PREFIX)) return;
 
   const args = content
-    .slice(prefix.length)
+    .slice(PREFIX.length)
     .trim()
     .split(/\s+/);
 
-  const command =
-    args.shift()?.toLowerCase();
+  const command = args.shift()?.toLowerCase();
 
   if (!command) return;
 
-  // ==========================================================
-  // SETUP
-  // ==========================================================
+  /* =========================
+     SETUP
+  ========================= */
 
   if (command === "setup") {
-    return message.channel.send(
-`⚙️ **FLEASION SETUP**
+    return message.reply(
+`⚙️ **FLEASION BOT SETUP**
 
 ━━━━━━━━━━━━━━━━━━━━
 
 👋 **WELCOME**
 
-First create a channel like:
-\`#welcome\`
+\`--setwelcome #channel\`
 
-Then run:
-\`--setwelcome #welcome\`
-
-Whenever someone joins, Fleasion will send a welcome message there.
+Sets the welcome channel.
 
 ━━━━━━━━━━━━━━━━━━━━
 
 🎫 **TICKETS**
 
-1. Create a category called something like:
-\`🎫 Tickets\`
+\`--ticketsetup #category\`
 
-2. Run:
-\`--ticketsetup #tickets\`
+Creates the ticket panel using the selected category.
 
-3. Fleasion will send a ticket panel.
-
-4. Members click **Create Ticket**.
-
-5. A private ticket channel gets created automatically.
-
-6. Members click **Close Ticket** when they're done.
+Users click **Create Ticket** to open a private ticket.
 
 ━━━━━━━━━━━━━━━━━━━━
 
 🎉 **GIVEAWAYS**
-
-Use:
-\`--giveaway 1h 1 RIVALS Skin\`
-
-Format:
-\`--giveaway [duration] [winners] [prize]\`
-
-Examples:
 
 \`--giveaway 10m 1 500 Robux\`
 
@@ -479,79 +320,154 @@ Examples:
 
 \`--giveaway 1d 1 Skin Case\`
 
-Time formats:
-\`10s\` = 10 seconds
-\`10m\` = 10 minutes
-\`1h\` = 1 hour
-\`1d\` = 1 day
-
 ━━━━━━━━━━━━━━━━━━━━
 
 🛡️ **PROTECTION**
 
-Automod: ✅ ON
-Anti-spam: ✅ ON
-Anti-raid: ✅ ON
+✅ Automod: ON
 
-Anti-spam:
-**8 messages within 6 seconds**
-→ **15 second timeout**
+✅ Anti-spam: **8 messages / 6 seconds → 15s timeout**
 
-Anti-raid:
-**5 joins within 10 seconds**
-→ owner gets an alert
+✅ Anti-raid: **5 joins / 10 seconds → owner alert**
 
 ━━━━━━━━━━━━━━━━━━━━
 
-🛠️ **MODERATION**
+🔨 **MODERATION**
 
-\`--warn @user reason\`
-\`--warnings @user\`
-\`--clearwarnings @user\`
-
-\`--mute @user 10s\`
-\`--unmute @user\`
-
-\`--kick @user\`
 \`--ban @user\`
+
 \`--unban USER_ID\`
 
-\`--clear 20\`
-\`--purge 20\`
+\`--kick @user\`
+
+\`--mute @user\`
+
+\`--unmute @user\`
+
+\`--timeout @user 10m\`
+
+\`--warn @user reason\`
+
+\`--warnings @user\`
+
+\`--clearwarnings @user\`
+
+\`--clear 10\`
+
+\`--purge 10\`
 
 \`--lock\`
+
 \`--unlock\`
-\`--slowmode 10\`
+
+\`--slowmode 5\`
+
+\`--nick @user NewName\`
 
 ━━━━━━━━━━━━━━━━━━━━
 
-👤 **INFO**
+📊 **INFO**
 
 \`--userinfo @user\`
+
 \`--serverinfo\`
-\`--nick @user name\`
-
-━━━━━━━━━━━━━━━━━━━━
-
-💬 **OTHER**
 
 \`--say message\`
-\`--help\`
 
 ━━━━━━━━━━━━━━━━━━━━
 
-💡 **TIP**
+❓ **HELP**
 
-You can always run:
+\`--help\`
+
 \`--setup\`
 
-to see this setup guide again.`
+━━━━━━━━━━━━━━━━━━━━
+
+🐕 **Prlngzz Dog**
+
+Fleasion protection & utilities`
     );
   }
 
-  // ==========================================================
-  // WARN
-  // ==========================================================
+  /* =========================
+     HELP
+  ========================= */
+
+  if (command === "help") {
+    return message.reply(
+`🐕 **PRLNGZZ DOG**
+
+**Moderation**
+\`--ban @user\`
+\`--unban USER_ID\`
+\`--kick @user\`
+\`--mute @user\`
+\`--unmute @user\`
+\`--timeout @user 10m\`
+\`--warn @user reason\`
+\`--warnings @user\`
+\`--clearwarnings @user\`
+\`--clear 10\`
+\`--purge 10\`
+\`--lock\`
+\`--unlock\`
+\`--slowmode 5\`
+\`--nick @user Name\`
+
+**Info**
+\`--userinfo @user\`
+\`--serverinfo\`
+\`--say message\`
+
+**Server**
+\`--setwelcome #channel\`
+\`--ticketsetup #category\`
+\`--giveaway 10m 1 Prize\`
+
+**Setup**
+\`--setup\`
+
+**Protection**
+🛡️ Automod: ON
+🛡️ Anti-spam: 8 / 6s → 15s timeout
+🛡️ Anti-raid: 5 / 10s → owner alert`
+    );
+  }
+
+  /* =========================
+     SET WELCOME
+  ========================= */
+
+  if (command === "setwelcome") {
+    if (
+      !hasPermission(
+        message,
+        PermissionsBitField.Flags.ManageGuild
+      )
+    ) {
+      return message.reply("❌ You need **Manage Server**.");
+    }
+
+    const channel = message.mentions.channels.first();
+
+    if (!channel) {
+      return message.reply(
+        "❌ Usage: `--setwelcome #channel`"
+      );
+    }
+
+    data.welcomeChannels[message.guild.id] = channel.id;
+    saveData();
+
+    return message.reply(
+      `✅ Welcome channel set to ${channel}.`
+    );
+  }
+
+  /* =========================
+     WARN
+  ========================= */
 
   if (command === "warn") {
     if (
@@ -560,31 +476,32 @@ to see this setup guide again.`
         PermissionsBitField.Flags.ModerateMembers
       )
     ) {
-      return message.reply(
-        "you don't have permission to warn people 😭"
-      );
+      return message.reply("❌ You need **Moderate Members**.");
     }
 
-    const target =
-      getTarget(message, args);
+    const member = getUser(message, args[0]);
 
-    if (!target) {
+    if (!member) {
       return message.reply(
-        "mention someone 💀"
+        "❌ Usage: `--warn @user reason`"
       );
     }
 
     const reason =
-      args.slice(1).join(" ") ||
-      "No reason provided";
+      args.slice(1).join(" ") || "No reason provided";
 
-    const warnings =
-      getWarnings(
-        message.guild.id,
-        target.id
-      );
+    const guildId = message.guild.id;
+    const userId = member.id;
 
-    warnings.push({
+    if (!data.warnings[guildId]) {
+      data.warnings[guildId] = {};
+    }
+
+    if (!data.warnings[guildId][userId]) {
+      data.warnings[guildId][userId] = [];
+    }
+
+    data.warnings[guildId][userId].push({
       reason,
       moderator: message.author.id,
       timestamp: Date.now()
@@ -592,55 +509,50 @@ to see this setup guide again.`
 
     saveData();
 
-    return message.channel.send(
-      `⚠️ **${target.user.tag}** has been warned.\n` +
-      `Reason: **${reason}**\n` +
-      `Warnings: **${warnings.length}**`
+    return message.reply(
+      `⚠️ ${member} has been warned.\nReason: **${reason}**\nTotal warnings: **${data.warnings[guildId][userId].length}**`
     );
   }
 
-  // ==========================================================
-  // WARNINGS
-  // ==========================================================
+  /* =========================
+     WARNINGS
+  ========================= */
 
-  if (
-    command === "warnings" ||
-    command === "warns"
-  ) {
-    const target =
-      getTarget(message, args) ||
-      message.member;
+  if (command === "warnings") {
+    const member = getUser(message, args[0]);
 
-    const warnings =
-      getWarnings(
-        message.guild.id,
-        target.id
-      );
-
-    if (!warnings.length) {
+    if (!member) {
       return message.reply(
-        `✅ **${target.user.tag}** has no warnings.`
+        "❌ Usage: `--warnings @user`"
       );
     }
 
-    let output =
-      `⚠️ **Warnings for ${target.user.tag}**\n\n`;
+    const guildWarnings =
+      data.warnings[message.guild.id] || {};
 
-    warnings.forEach(
-      (warning, index) => {
-        output +=
-          `**${index + 1}.** ${warning.reason}\n`;
-      }
-    );
+    const warnings = guildWarnings[member.id] || [];
 
-    return message.channel.send(
-      output
+    if (warnings.length === 0) {
+      return message.reply(
+        `✅ ${member} has no warnings.`
+      );
+    }
+
+    const text = warnings
+      .map(
+        (warning, index) =>
+          `**${index + 1}.** ${warning.reason}`
+      )
+      .join("\n");
+
+    return message.reply(
+      `⚠️ **Warnings for ${member}**\n\n${text}`
     );
   }
 
-  // ==========================================================
-  // CLEAR WARNINGS
-  // ==========================================================
+  /* =========================
+     CLEAR WARNINGS
+  ========================= */
 
   if (
     command === "clearwarnings" ||
@@ -652,36 +564,141 @@ to see this setup guide again.`
         PermissionsBitField.Flags.ModerateMembers
       )
     ) {
-      return message.reply(
-        "you don't have permission to clear warnings 😭"
-      );
+      return message.reply("❌ You need **Moderate Members**.");
     }
 
-    const target =
-      getTarget(message, args);
+    const member = getUser(message, args[0]);
 
-    if (!target) {
+    if (!member) {
       return message.reply(
-        "mention someone 💀"
+        "❌ Usage: `--clearwarnings @user`"
       );
     }
 
     if (data.warnings[message.guild.id]) {
-      delete data.warnings[
-        message.guild.id
-      ][target.id];
+      delete data.warnings[message.guild.id][member.id];
+      saveData();
     }
 
-    saveData();
-
-    return message.channel.send(
-      `🧹 cleared all warnings for **${target.user.tag}**`
+    return message.reply(
+      `✅ Cleared all warnings for ${member}.`
     );
   }
 
-  // ==========================================================
-  // MUTE / TIMEOUT
-  // ==========================================================
+  /* =========================
+     BAN
+  ========================= */
+
+  if (command === "ban") {
+    if (
+      !hasPermission(
+        message,
+        PermissionsBitField.Flags.BanMembers
+      )
+    ) {
+      return message.reply("❌ You need **Ban Members**.");
+    }
+
+    const member = getUser(message, args[0]);
+
+    if (!member) {
+      return message.reply(
+        "❌ Usage: `--ban @user`"
+      );
+    }
+
+    if (!member.bannable) {
+      return message.reply(
+        "❌ I can't ban that member. Check my role position and permissions."
+      );
+    }
+
+    const reason =
+      args.slice(1).join(" ") || "No reason provided";
+
+    await member.ban({ reason });
+
+    return message.reply(
+      `🔨 Banned **${member.user.tag}**\nReason: ${reason}`
+    );
+  }
+
+  /* =========================
+     UNBAN
+  ========================= */
+
+  if (command === "unban") {
+    if (
+      !hasPermission(
+        message,
+        PermissionsBitField.Flags.BanMembers
+      )
+    ) {
+      return message.reply("❌ You need **Ban Members**.");
+    }
+
+    const userId = args[0];
+
+    if (!userId) {
+      return message.reply(
+        "❌ Usage: `--unban USER_ID`"
+      );
+    }
+
+    try {
+      await message.guild.members.unban(userId);
+
+      return message.reply(
+        `✅ Unbanned user \`${userId}\`.`
+      );
+    } catch {
+      return message.reply(
+        "❌ Could not unban that user."
+      );
+    }
+  }
+
+  /* =========================
+     KICK
+  ========================= */
+
+  if (command === "kick") {
+    if (
+      !hasPermission(
+        message,
+        PermissionsBitField.Flags.KickMembers
+      )
+    ) {
+      return message.reply("❌ You need **Kick Members**.");
+    }
+
+    const member = getUser(message, args[0]);
+
+    if (!member) {
+      return message.reply(
+        "❌ Usage: `--kick @user`"
+      );
+    }
+
+    if (!member.kickable) {
+      return message.reply(
+        "❌ I can't kick that member."
+      );
+    }
+
+    const reason =
+      args.slice(1).join(" ") || "No reason provided";
+
+    await member.kick(reason);
+
+    return message.reply(
+      `👢 Kicked **${member.user.tag}**\nReason: ${reason}`
+    );
+  }
+
+  /* =========================
+     MUTE
+  ========================= */
 
   if (
     command === "mute" ||
@@ -693,60 +710,46 @@ to see this setup guide again.`
         PermissionsBitField.Flags.ModerateMembers
       )
     ) {
+      return message.reply("❌ You need **Moderate Members**.");
+    }
+
+    const member = getUser(message, args[0]);
+
+    if (!member) {
       return message.reply(
-        "you don't have permission to mute people 😭"
+        "❌ Usage: `--mute @user` or `--timeout @user 10m`"
       );
     }
 
-    const target =
-      getTarget(message, args);
+    let duration = 10 * 60 * 1000;
 
-    if (!target) {
+    if (args[1]) {
+      const parsed = parseDuration(args[1]);
+
+      if (parsed) {
+        duration = parsed;
+      }
+    }
+
+    if (duration > 28 * 24 * 60 * 60 * 1000) {
       return message.reply(
-        "mention someone 💀"
+        "❌ Discord only allows timeouts up to 28 days."
       );
     }
 
-    const durationText =
-      args[1];
+    await member.timeout(
+      duration,
+      args.slice(2).join(" ") || "Moderator timeout"
+    );
 
-    const duration =
-      durationToMs(durationText);
-
-    if (!duration) {
-      return message.reply(
-        "use something like `10s`, `5m`, `1h` or `1d`"
-      );
-    }
-
-    if (
-      duration >
-      28 * 24 * 60 * 60 * 1000
-    ) {
-      return message.reply(
-        "maximum timeout is 28 days 😭"
-      );
-    }
-
-    try {
-      await target.timeout(
-        duration,
-        `Muted by ${message.author.tag}`
-      );
-
-      return message.channel.send(
-        `🔇 **${target.user.tag}** has been muted for **${durationText}**`
-      );
-    } catch {
-      return message.reply(
-        "i couldn't mute them. make sure my role is above theirs."
-      );
-    }
+    return message.reply(
+      `🔇 ${member} has been timed out for **${formatDuration(duration)}**.`
+    );
   }
 
-  // ==========================================================
-  // UNMUTE
-  // ==========================================================
+  /* =========================
+     UNMUTE
+  ========================= */
 
   if (command === "unmute") {
     if (
@@ -755,156 +758,27 @@ to see this setup guide again.`
         PermissionsBitField.Flags.ModerateMembers
       )
     ) {
+      return message.reply("❌ You need **Moderate Members**.");
+    }
+
+    const member = getUser(message, args[0]);
+
+    if (!member) {
       return message.reply(
-        "you don't have permission to unmute people 😭"
+        "❌ Usage: `--unmute @user`"
       );
     }
 
-    const target =
-      getTarget(message, args);
+    await member.timeout(null);
 
-    if (!target) {
-      return message.reply(
-        "mention someone 💀"
-      );
-    }
-
-    try {
-      await target.timeout(null);
-
-      return message.channel.send(
-        `🔊 **${target.user.tag}** has been unmuted.`
-      );
-    } catch {
-      return message.reply(
-        "i couldn't unmute them."
-      );
-    }
+    return message.reply(
+      `🔊 ${member} has been unmuted.`
+    );
   }
 
-  // ==========================================================
-  // KICK
-  // ==========================================================
-
-  if (command === "kick") {
-    if (
-      !hasPermission(
-        message,
-        PermissionsBitField.Flags.KickMembers
-      )
-    ) {
-      return message.reply(
-        "you don't have permission to kick people 😭"
-      );
-    }
-
-    const target =
-      getTarget(message, args);
-
-    if (!target) {
-      return message.reply(
-        "mention someone 💀"
-      );
-    }
-
-    try {
-      await target.kick(
-        `Kicked by ${message.author.tag}`
-      );
-
-      return message.channel.send(
-        `👢 **${target.user.tag}** has been kicked.`
-      );
-    } catch {
-      return message.reply(
-        "i couldn't kick them."
-      );
-    }
-  }
-
-  // ==========================================================
-  // BAN
-  // ==========================================================
-
-  if (command === "ban") {
-    if (
-      !hasPermission(
-        message,
-        PermissionsBitField.Flags.BanMembers
-      )
-    ) {
-      return message.reply(
-        "you don't have permission to ban people 😭"
-      );
-    }
-
-    const target =
-      getTarget(message, args);
-
-    if (!target) {
-      return message.reply(
-        "mention someone 💀"
-      );
-    }
-
-    try {
-      await target.ban({
-        reason:
-          `Banned by ${message.author.tag}`
-      });
-
-      return message.channel.send(
-        `🔨 **${target.user.tag}** has been banned.`
-      );
-    } catch {
-      return message.reply(
-        "i couldn't ban them."
-      );
-    }
-  }
-
-  // ==========================================================
-  // UNBAN
-  // ==========================================================
-
-  if (command === "unban") {
-    if (
-      !hasPermission(
-        message,
-        PermissionsBitField.Flags.BanMembers
-      )
-    ) {
-      return message.reply(
-        "you don't have permission to unban people 😭"
-      );
-    }
-
-    const userId = args[0];
-
-    if (!userId) {
-      return message.reply(
-        "give me the user's ID 💀"
-      );
-    }
-
-    try {
-      await message.guild.members.unban(
-        userId
-      );
-
-      return message.channel.send(
-        `🔓 user **${userId}** has been unbanned.`
-      );
-    } catch {
-      return message.reply(
-        "i couldn't unban that user."
-      );
-    }
-  }
-
-  // ==========================================================
-  // CLEAR / PURGE
-  // ==========================================================
+  /* =========================
+     CLEAR / PURGE
+  ========================= */
 
   if (
     command === "clear" ||
@@ -917,47 +791,29 @@ to see this setup guide again.`
       )
     ) {
       return message.reply(
-        "you don't have permission to delete messages 😭"
+        "❌ You need **Manage Messages**."
       );
     }
 
-    const amount =
-      Number(args[0]);
+    const amount = Number(args[0]);
 
-    if (
-      !amount ||
-      amount < 1 ||
-      amount > 100
-    ) {
+    if (!amount || amount < 1 || amount > 100) {
       return message.reply(
-        "use a number between 1 and 100"
+        "❌ Choose a number from **1 to 100**."
       );
     }
 
-    try {
-      await message.channel.bulkDelete(
-        amount,
-        true
-      );
+    const deleted =
+      await message.channel.bulkDelete(amount, true);
 
-      const msg =
-        await message.channel.send(
-          `🧹 deleted **${amount}** messages`
-        );
-
-      setTimeout(() => {
-        msg.delete().catch(() => {});
-      }, 3000);
-    } catch {
-      return message.reply(
-        "i couldn't delete those messages."
-      );
-    }
+    return message.channel.send(
+      `🧹 Deleted **${deleted.size}** messages.`
+    );
   }
 
-  // ==========================================================
-  // LOCK
-  // ==========================================================
+  /* =========================
+     LOCK
+  ========================= */
 
   if (command === "lock") {
     if (
@@ -967,31 +823,23 @@ to see this setup guide again.`
       )
     ) {
       return message.reply(
-        "you don't have permission to lock channels 😭"
+        "❌ You need **Manage Channels**."
       );
     }
 
-    try {
-      await message.channel.permissionOverwrites.edit(
-        message.guild.roles.everyone,
-        {
-          SendMessages: false
-        }
-      );
+    await message.channel.permissionOverwrites.edit(
+      message.guild.roles.everyone,
+      {
+        SendMessages: false
+      }
+    );
 
-      return message.channel.send(
-        "🔒 channel locked."
-      );
-    } catch {
-      return message.reply(
-        "i couldn't lock this channel."
-      );
-    }
+    return message.reply("🔒 Channel locked.");
   }
 
-  // ==========================================================
-  // UNLOCK
-  // ==========================================================
+  /* =========================
+     UNLOCK
+  ========================= */
 
   if (command === "unlock") {
     if (
@@ -1001,31 +849,23 @@ to see this setup guide again.`
       )
     ) {
       return message.reply(
-        "you don't have permission to unlock channels 😭"
+        "❌ You need **Manage Channels**."
       );
     }
 
-    try {
-      await message.channel.permissionOverwrites.edit(
-        message.guild.roles.everyone,
-        {
-          SendMessages: null
-        }
-      );
+    await message.channel.permissionOverwrites.edit(
+      message.guild.roles.everyone,
+      {
+        SendMessages: null
+      }
+    );
 
-      return message.channel.send(
-        "🔓 channel unlocked."
-      );
-    } catch {
-      return message.reply(
-        "i couldn't unlock this channel."
-      );
-    }
+    return message.reply("🔓 Channel unlocked.");
   }
 
-  // ==========================================================
-  // SLOWMODE
-  // ==========================================================
+  /* =========================
+     SLOWMODE
+  ========================= */
 
   if (command === "slowmode") {
     if (
@@ -1035,41 +875,32 @@ to see this setup guide again.`
       )
     ) {
       return message.reply(
-        "you don't have permission to use slowmode 😭"
+        "❌ You need **Manage Channels**."
       );
     }
 
-    const seconds =
-      Number(args[0]);
+    const seconds = Number(args[0]);
 
     if (
-      isNaN(seconds) ||
+      Number.isNaN(seconds) ||
       seconds < 0 ||
       seconds > 21600
     ) {
       return message.reply(
-        "use between 0 and 21600 seconds"
+        "❌ Slowmode must be between 0 and 21600 seconds."
       );
     }
 
-    try {
-      await message.channel.setRateLimitPerUser(
-        seconds
-      );
+    await message.channel.setRateLimitPerUser(seconds);
 
-      return message.channel.send(
-        `🐌 slowmode set to **${seconds}s**`
-      );
-    } catch {
-      return message.reply(
-        "i couldn't change the slowmode."
-      );
-    }
+    return message.reply(
+      `🐌 Slowmode set to **${seconds}s**.`
+    );
   }
 
-  // ==========================================================
-  // NICK
-  // ==========================================================
+  /* =========================
+     NICK
+  ========================= */
 
   if (command === "nick") {
     if (
@@ -1079,69 +910,69 @@ to see this setup guide again.`
       )
     ) {
       return message.reply(
-        "you don't have permission to change nicknames 😭"
+        "❌ You need **Manage Nicknames**."
       );
     }
 
-    const target =
-      getTarget(message, args);
+    const member = getUser(message, args[0]);
 
-    if (!target) {
+    if (!member) {
       return message.reply(
-        "mention someone 💀"
+        "❌ Usage: `--nick @user NewName`"
       );
     }
 
-    const nickname =
-      args.slice(1).join(" ") ||
-      null;
+    const nickname = args.slice(1).join(" ");
 
-    try {
-      await target.setNickname(
-        nickname
-      );
-
-      return message.channel.send(
-        `✏️ nickname updated for **${target.user.tag}**`
-      );
-    } catch {
+    if (!nickname) {
       return message.reply(
-        "i couldn't change their nickname."
+        "❌ Give me a nickname."
       );
     }
+
+    await member.setNickname(nickname);
+
+    return message.reply(
+      `✅ Changed ${member}'s nickname to **${nickname}**.`
+    );
   }
 
-  // ==========================================================
-  // USERINFO
-  // ==========================================================
+  /* =========================
+     USERINFO
+  ========================= */
 
   if (command === "userinfo") {
-    const target =
-      getTarget(message, args) ||
-      message.member;
+    const member = getUser(message, args[0]) || message.member;
 
-    return message.channel.send(
-      `👤 **${target.user.tag}**\n` +
-      `ID: ${target.id}\n` +
-      `Joined: ${target.joinedAt?.toLocaleString() || "unknown"}`
+    return message.reply(
+`👤 **USER INFO**
+
+Username: **${member.user.tag}**
+ID: \`${member.id}\`
+Joined: <t:${Math.floor(member.joinedTimestamp / 1000)}:R>
+Account: <t:${Math.floor(member.user.createdTimestamp / 1000)}:R>`
     );
   }
 
-  // ==========================================================
-  // SERVERINFO
-  // ==========================================================
+  /* =========================
+     SERVERINFO
+  ========================= */
 
   if (command === "serverinfo") {
-    return message.channel.send(
-      `🏠 **${message.guild.name}**\n` +
-      `Members: ${message.guild.memberCount}\n` +
-      `Server ID: ${message.guild.id}`
+    return message.reply(
+`🏠 **SERVER INFO**
+
+Name: **${message.guild.name}**
+ID: \`${message.guild.id}\`
+Members: **${message.guild.memberCount}**
+Channels: **${message.guild.channels.cache.size}**
+Roles: **${message.guild.roles.cache.size}**`
     );
   }
 
-  // ==========================================================
-  // SAY
-  // ==========================================================
+  /* =========================
+     SAY
+  ========================= */
 
   if (command === "say") {
     if (
@@ -1151,31 +982,28 @@ to see this setup guide again.`
       )
     ) {
       return message.reply(
-        "you don't have permission to use this 😭"
+        "❌ You need **Manage Messages**."
       );
     }
 
-    const text =
-      args.join(" ");
+    const text = args.join(" ");
 
     if (!text) {
       return message.reply(
-        "tell me what to say 💀"
+        "❌ Usage: `--say message`"
       );
     }
 
     await message.delete().catch(() => {});
 
-    return message.channel.send(
-      cleanText(text)
-    );
+    return message.channel.send(text);
   }
 
-  // ==========================================================
-  // SET WELCOME
-  // ==========================================================
+  /* =========================
+     TICKET SETUP
+  ========================= */
 
-  if (command === "setwelcome") {
+  if (command === "ticketsetup") {
     if (
       !hasPermission(
         message,
@@ -1183,100 +1011,52 @@ to see this setup guide again.`
       )
     ) {
       return message.reply(
-        "you don't have permission to configure welcome messages 😭"
+        "❌ You need **Manage Server**."
       );
     }
 
-    const channel =
-      message.mentions.channels.first();
+    const category = message.mentions.channels.first();
 
-    if (!channel) {
+    if (
+      !category ||
+      category.type !== ChannelType.GuildCategory
+    ) {
       return message.reply(
-        "use `--setwelcome #welcome`"
+        "❌ Usage: `--ticketsetup #category`\n\nYou must mention a **category**, not a normal text channel."
       );
     }
 
-    data.welcomeChannels[
-      message.guild.id
-    ] = channel.id;
-
+    data.ticketCategories[message.guild.id] = category.id;
     saveData();
 
-    return message.channel.send(
-      `👋 welcome channel set to ${channel}`
+    const button = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("create_ticket")
+        .setLabel("Create Ticket")
+        .setEmoji("🎫")
+        .setStyle(ButtonStyle.Primary)
     );
-  }
 
-  // ==========================================================
-  // TICKET SETUP
-  // ==========================================================
+    await message.channel.send(
+      `🎫 **FLEASION SUPPORT**
 
-  if (command === "ticketsetup") {
-    if (
-      !hasPermission(
-        message,
-        PermissionsBitField.Flags.ManageChannels
-      )
-    ) {
-      return message.reply(
-        "you don't have permission to setup tickets 😭"
-      );
-    }
+Need help? Click the button below to create a private ticket.
 
-    const category =
-      message.mentions.channels.first();
-
-    if (!category) {
-      return message.reply(
-        "use `--ticketsetup #tickets`"
-      );
-    }
-
-    if (
-      category.type !==
-      ChannelType.GuildCategory
-    ) {
-      return message.reply(
-        "that needs to be a category 💀"
-      );
-    }
-
-    data.ticketCategories[
-      message.guild.id
-    ] = category.id;
-
-    saveData();
-
-    const button =
-      new ActionRowBuilder()
-        .addComponents(
-          new ButtonBuilder()
-            .setCustomId(
-              "create_ticket"
-            )
-            .setLabel(
-              "Create Ticket"
-            )
-            .setEmoji("🎫")
-            .setStyle(
-              ButtonStyle.Primary
-            )
-        );
+Only you can see your ticket.`,
+    );
 
     await message.channel.send({
-      content:
-        "🎫 **FLEASION TICKETS**\n\n" +
-        "Need help or want to order something?\n" +
-        "Click the button below to create a private ticket.",
       components: [button]
     });
 
-    return;
+    return message.reply(
+      `✅ Ticket system configured using ${category}.`
+    );
   }
 
-  // ==========================================================
-  // GIVEAWAY
-  // ==========================================================
+  /* =========================
+     GIVEAWAY
+  ========================= */
 
   if (command === "giveaway") {
     if (
@@ -1286,511 +1066,274 @@ to see this setup guide again.`
       )
     ) {
       return message.reply(
-        "you don't have permission to start giveaways 😭"
+        "❌ You need **Manage Server**."
       );
     }
 
-    const durationText =
-      args[0];
+    const duration = parseDuration(args[0]);
+    const winners = Number(args[1]);
+    const prize = args.slice(2).join(" ");
 
-    const winners =
-      Number(args[1]);
-
-    const prize =
-      args.slice(2).join(" ");
-
-    const duration =
-      durationToMs(
-        durationText
-      );
-
-    if (!duration) {
+    if (!duration || !winners || !prize) {
       return message.reply(
-        "use something like `--giveaway 1h 1 RIVALS Skin`"
+        "❌ Usage: `--giveaway 10m 1 Prize`"
       );
     }
 
-    if (
-      !winners ||
-      winners < 1
-    ) {
+    if (duration < 10000) {
       return message.reply(
-        "give me the number of winners 💀"
-      );
-    }
-
-    if (!prize) {
-      return message.reply(
-        "give me a prize 💀"
+        "❌ Giveaway duration must be at least 10 seconds."
       );
     }
 
     const giveawayId =
       `${message.guild.id}-${Date.now()}`;
 
-    const endTime =
-      Date.now() + duration;
+    giveaways.set(giveawayId, {
+      channelId: message.channel.id,
+      entrants: new Set(),
+      winners,
+      prize
+    });
 
-    const button =
-      new ActionRowBuilder()
-        .addComponents(
-          new ButtonBuilder()
-            .setCustomId(
-              `giveaway_${giveawayId}`
-            )
-            .setLabel(
-              "Enter Giveaway"
-            )
-            .setEmoji("🎉")
-            .setStyle(
-              ButtonStyle.Success
-            )
-        );
+    const button = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`giveaway_${giveawayId}`)
+        .setLabel("Enter Giveaway")
+        .setEmoji("🎉")
+        .setStyle(ButtonStyle.Success)
+    );
 
     const giveawayMessage =
       await message.channel.send({
         content:
-          `🎉 **GIVEAWAY** 🎉\n\n` +
-          `Prize: **${cleanText(prize)}**\n` +
-          `Winners: **${winners}**\n` +
-          `Ends: <t:${Math.floor(
-            endTime / 1000
-          )}:R>\n\n` +
-          `Click the button below to enter!`,
+`🎉 **GIVEAWAY**
+
+Prize: **${prize}**
+Winners: **${winners}**
+Ends: <t:${Math.floor((Date.now() + duration) / 1000)}:R>
+
+Click the button below to enter!`,
         components: [button]
       });
 
-    giveaways.set(
-      giveawayId,
-      {
-        guildId:
-          message.guild.id,
+    setTimeout(async () => {
+      const giveaway = giveaways.get(giveawayId);
 
-        channelId:
-          message.channel.id,
+      if (!giveaway) return;
 
-        messageId:
-          giveawayMessage.id,
+      giveaways.delete(giveawayId);
 
-        prize,
-        winners,
+      const entrants = [...giveaway.entrants];
 
-        entries:
-          new Set(),
+      if (entrants.length === 0) {
+        return giveawayMessage.edit({
+          content:
+`🎉 **GIVEAWAY ENDED**
 
-        endTime
+Prize: **${prize}**
+
+❌ Nobody entered.`,
+          components: []
+        }).catch(() => {});
       }
-    );
 
-    setTimeout(
-      () => endGiveaway(
-        giveawayId
-      ),
-      duration
-    );
+      const selected = [];
+
+      while (
+        selected.length < Math.min(winners, entrants.length)
+      ) {
+        const random =
+          entrants[Math.floor(Math.random() * entrants.length)];
+
+        if (!selected.includes(random)) {
+          selected.push(random);
+        }
+      }
+
+      const winnerText =
+        selected.map(id => `<@${id}>`).join(", ");
+
+      await giveawayMessage.edit({
+        content:
+`🎉 **GIVEAWAY ENDED**
+
+Prize: **${prize}**
+
+🏆 Winner${selected.length > 1 ? "s" : ""}: ${winnerText}`,
+        components: []
+      }).catch(() => {});
+
+      message.channel.send(
+        `🎉 Congratulations ${winnerText}! You won **${prize}**!`
+      ).catch(() => {});
+    }, duration);
 
     return;
-  }
-
-  // ==========================================================
-  // HELP
-  // ==========================================================
-
-  if (command === "help") {
-    return message.channel.send(
-`**FLEASION BOT**
-
-🛡️ MODERATION
-\`--ban @user\`
-\`--unban USER_ID\`
-\`--kick @user\`
-\`--mute @user 10s\`
-\`--unmute @user\`
-\`--warn @user reason\`
-\`--warnings @user\`
-\`--clearwarnings @user\`
-\`--clear 20\`
-\`--purge 20\`
-
-🔒 CHANNELS
-\`--lock\`
-\`--unlock\`
-\`--slowmode 10\`
-
-👋 WELCOME
-\`--setwelcome #channel\`
-
-🎫 TICKETS
-\`--ticketsetup #category\`
-
-🎉 GIVEAWAYS
-\`--giveaway 1h 1 Prize\`
-
-👤 INFO
-\`--nick @user name\`
-\`--userinfo @user\`
-\`--serverinfo\`
-
-💬 OTHER
-\`--say message\`
-
-⚙️ SETUP
-\`--setup\`
-
-🛡️ PROTECTION
-Automod: ON
-Anti-spam: 8 / 6s
-Anti-raid: ON`
-    );
   }
 });
 
-// ============================================================
-// BUTTON INTERACTIONS
-// ============================================================
+/* =========================
+   BUTTON HANDLER
+========================= */
 
-client.on(
-  "interactionCreate",
-  async (interaction) => {
+client.on("interactionCreate", async interaction => {
+  if (!interaction.isButton()) return;
 
-    if (!interaction.isButton()) return;
+  /* =========================
+     CREATE TICKET
+  ========================= */
 
-    // ========================================================
-    // CREATE TICKET
-    // ========================================================
+  if (interaction.customId === "create_ticket") {
+    const guild = interaction.guild;
 
-    if (
-      interaction.customId ===
-      "create_ticket"
-    ) {
-      const guild =
-        interaction.guild;
+    const categoryId =
+      data.ticketCategories[guild.id];
 
-      const categoryId =
-        data.ticketCategories[
-          guild.id
-        ];
-
-      if (!categoryId) {
-        return interaction.reply({
-          content:
-            "ticket system hasn't been configured yet 😭",
-          ephemeral: true
-        });
-      }
-
-      const existing =
-        guild.channels.cache.find(
-          channel =>
-            channel.name ===
-              `ticket-${interaction.user.username.toLowerCase()}` &&
-            channel.parentId ===
-              categoryId
-        );
-
-      if (existing) {
-        return interaction.reply({
-          content:
-            `you already have a ticket: ${existing}`,
-          ephemeral: true
-        });
-      }
-
-      try {
-        const channel =
-          await guild.channels.create({
-            name:
-              `ticket-${interaction.user.username}`
-                .toLowerCase()
-                .replace(
-                  /[^a-z0-9-]/g,
-                  ""
-                )
-                .slice(0, 90),
-
-            type:
-              ChannelType.GuildText,
-
-            parent:
-              categoryId,
-
-            permissionOverwrites: [
-              {
-                id:
-                  guild.roles.everyone.id,
-
-                deny: [
-                  PermissionsBitField.Flags
-                    .ViewChannel
-                ]
-              },
-              {
-                id:
-                  interaction.user.id,
-
-                allow: [
-                  PermissionsBitField.Flags
-                    .ViewChannel,
-
-                  PermissionsBitField.Flags
-                    .SendMessages,
-
-                  PermissionsBitField.Flags
-                    .ReadMessageHistory
-                ]
-              }
-            ]
-          });
-
-        const closeButton =
-          new ActionRowBuilder()
-            .addComponents(
-              new ButtonBuilder()
-                .setCustomId(
-                  "close_ticket"
-                )
-                .setLabel(
-                  "Close Ticket"
-                )
-                .setEmoji("🔒")
-                .setStyle(
-                  ButtonStyle.Danger
-                )
-            );
-
-        await channel.send({
-          content:
-            `🎫 **Ticket created!**\n\n` +
-            `${interaction.user}, tell us what you need help with.\n\n` +
-            `A staff member will help you soon.`,
-          components: [
-            closeButton
-          ]
-        });
-
-        return interaction.reply({
-          content:
-            `🎫 your ticket has been created: ${channel}`,
-          ephemeral: true
-        });
-
-      } catch (error) {
-        console.log(
-          "Ticket error:",
-          error
-        );
-
-        return interaction.reply({
-          content:
-            "i couldn't create the ticket. check my permissions 😭",
-          ephemeral: true
-        });
-      }
-    }
-
-    // ========================================================
-    // CLOSE TICKET
-    // ========================================================
-
-    if (
-      interaction.customId ===
-      "close_ticket"
-    ) {
-      if (
-        !interaction.channel.name.startsWith(
-          "ticket-"
-        )
-      ) {
-        return interaction.reply({
-          content:
-            "this isn't a ticket.",
-          ephemeral: true
-        });
-      }
-
-      await interaction.reply(
-        "🔒 closing ticket in 5 seconds..."
-      );
-
-      setTimeout(() => {
-        interaction.channel
-          .delete()
-          .catch(() => {});
-      }, 5000);
-
-      return;
-    }
-
-    // ========================================================
-    // GIVEAWAY
-    // ========================================================
-
-    if (
-      interaction.customId.startsWith(
-        "giveaway_"
-      )
-    ) {
-      const giveawayId =
-        interaction.customId.replace(
-          "giveaway_",
-          ""
-        );
-
-      const giveaway =
-        giveaways.get(
-          giveawayId
-        );
-
-      if (!giveaway) {
-        return interaction.reply({
-          content:
-            "this giveaway has already ended 😭",
-          ephemeral: true
-        });
-      }
-
-      if (
-        giveaway.entries.has(
-          interaction.user.id
-        )
-      ) {
-        return interaction.reply({
-          content:
-            "you're already entered 😭",
-          ephemeral: true
-        });
-      }
-
-      giveaway.entries.add(
-        interaction.user.id
-      );
-
+    if (!categoryId) {
       return interaction.reply({
         content:
-          "🎉 you're entered into the giveaway!",
+          "❌ Tickets haven't been configured yet.",
         ephemeral: true
       });
     }
+
+    const existing =
+      guild.channels.cache.find(
+        channel =>
+          channel.name ===
+          `ticket-${interaction.user.username.toLowerCase().replace(/[^a-z0-9]/g, "")}`
+      );
+
+    if (existing) {
+      return interaction.reply({
+        content:
+          `❌ You already have a ticket: ${existing}`,
+        ephemeral: true
+      });
+    }
+
+    const safeName =
+      interaction.user.username
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "")
+        .slice(0, 20);
+
+    const ticket =
+      await guild.channels.create({
+        name: `ticket-${safeName}`,
+        type: ChannelType.GuildText,
+        parent: categoryId,
+        permissionOverwrites: [
+          {
+            id: guild.roles.everyone.id,
+            deny: [PermissionsBitField.Flags.ViewChannel]
+          },
+          {
+            id: interaction.user.id,
+            allow: [
+              PermissionsBitField.Flags.ViewChannel,
+              PermissionsBitField.Flags.SendMessages,
+              PermissionsBitField.Flags.ReadMessageHistory
+            ]
+          }
+        ]
+      });
+
+    const closeButton =
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId("close_ticket")
+          .setLabel("Close Ticket")
+          .setEmoji("🔒")
+          .setStyle(ButtonStyle.Danger)
+      );
+
+    await ticket.send({
+      content:
+`🎫 **TICKET CREATED**
+
+Welcome ${interaction.user}!
+
+Explain your issue and someone will help you.
+
+Click **Close Ticket** when you're finished.`,
+      components: [closeButton]
+    });
+
+    return interaction.reply({
+      content: `✅ Ticket created: ${ticket}`,
+      ephemeral: true
+    });
   }
-);
 
-// ============================================================
-// END GIVEAWAY
-// ============================================================
+  /* =========================
+     CLOSE TICKET
+  ========================= */
 
-async function endGiveaway(id) {
-  const giveaway =
-    giveaways.get(id);
-
-  if (!giveaway) return;
-
-  const guild =
-    client.guilds.cache.get(
-      giveaway.guildId
+  if (interaction.customId === "close_ticket") {
+    await interaction.reply(
+      "🔒 Closing ticket in 5 seconds..."
     );
 
-  if (!guild) return;
-
-  const channel =
-    guild.channels.cache.get(
-      giveaway.channelId
-    );
-
-  if (!channel) return;
-
-  const entries =
-    Array.from(
-      giveaway.entries
-    );
-
-  if (!entries.length) {
-    await channel.send(
-      `🎉 **GIVEAWAY ENDED!**\n\n` +
-      `Prize: **${cleanText(
-        giveaway.prize
-      )}**\n` +
-      `Nobody entered 😭`
-    ).catch(() => {});
-
-    giveaways.delete(id);
+    setTimeout(() => {
+      interaction.channel.delete().catch(() => {});
+    }, 5000);
 
     return;
   }
 
-  const winners = [];
+  /* =========================
+     GIVEAWAY BUTTON
+  ========================= */
 
-  const amount =
-    Math.min(
-      giveaway.winners,
-      entries.length
-    );
-
-  while (
-    winners.length < amount
+  if (
+    interaction.customId.startsWith("giveaway_")
   ) {
-    const random =
-      entries[
-        Math.floor(
-          Math.random() *
-          entries.length
-        )
-      ];
+    const giveawayId =
+      interaction.customId.replace("giveaway_", "");
+
+    const giveaway =
+      giveaways.get(giveawayId);
+
+    if (!giveaway) {
+      return interaction.reply({
+        content:
+          "❌ This giveaway has already ended.",
+        ephemeral: true
+      });
+    }
 
     if (
-      !winners.includes(
-        random
-      )
+      giveaway.entrants.has(interaction.user.id)
     ) {
-      winners.push(random);
+      return interaction.reply({
+        content:
+          "❌ You're already entered.",
+        ephemeral: true
+      });
     }
+
+    giveaway.entrants.add(interaction.user.id);
+
+    return interaction.reply({
+      content:
+        "✅ You entered the giveaway! Good luck 🍀",
+      ephemeral: true
+    });
   }
+});
 
-  const mentions =
-    winners
-      .map(
-        id => `<@${id}>`
-      )
-      .join(", ");
+/* =========================
+   LOGIN
+========================= */
 
-  await channel.send(
-    `🎉 **GIVEAWAY ENDED!** 🎉\n\n` +
-    `Prize: **${cleanText(
-      giveaway.prize
-    )}**\n` +
-    `Winner${winners.length === 1 ? "" : "s"}: ${mentions}`
-  ).catch(() => {});
-
-  giveaways.delete(id);
+if (!process.env.DISCORD_TOKEN) {
+  console.error(
+    "❌ DISCORD_TOKEN is missing from Railway environment variables."
+  );
+  process.exit(1);
 }
 
-// ============================================================
-// ERRORS
-// ============================================================
-
-process.on(
-  "unhandledRejection",
-  error => {
-    console.error(
-      "Unhandled rejection:",
-      error
-    );
-  }
-);
-
-process.on(
-  "uncaughtException",
-  error => {
-    console.error(
-      "Uncaught exception:",
-      error
-    );
-  }
-);
-
-// ============================================================
-// LOGIN
-// ============================================================
-
-client.login(
-  process.env.DISCORD_TOKEN
-);
+client.login(process.env.DISCORD_TOKEN);
+```
