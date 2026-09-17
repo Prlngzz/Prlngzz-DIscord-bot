@@ -1,3 +1,4 @@
+console.log("🔥 PRLNGZZ DOG NEW CODE LOADED 🔥");
 ```js
 const {
   Client,
