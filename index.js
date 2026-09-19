@@ -238,3 +238,4 @@ client.on("messageCreate", async function (message) {
         return message.reply("🔓 channel unlocked");
     }
 });
+client.login(process.env.DISCORD_TOKEN);
