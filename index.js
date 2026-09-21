@@ -45,6 +45,10 @@ function saveData() {
     }
 }
 
+async function deleteCommand(message) {
+    await message.delete().catch(function () {});
+}
+
 function hasPermission(message, permission) {
     return message.member.permissions.has(permission);
 }
@@ -273,7 +277,9 @@ client.on("messageCreate", async function (message) {
     /* ========================= SETUP ========================= */
 
     if (cmd === "setup") {
-        return message.reply(
+        await deleteCommand(message);
+
+        return message.channel.send(
             "🐕 **PRLNGZZ DOG SETUP**\n\n" +
 
             "━━━━━━━━━━━━━━━━━━━━\n\n" +
@@ -342,7 +348,9 @@ client.on("messageCreate", async function (message) {
     /* ========================= HELP ========================= */
 
     if (cmd === "help") {
-        return message.reply(
+        await deleteCommand(message);
+
+        return message.channel.send(
             "🐕 **PRLNGZZ DOG**\n\n" +
 
             "**Moderation**\n" +
@@ -402,7 +410,9 @@ client.on("messageCreate", async function (message) {
 
         saveData();
 
-        return message.reply(
+        await deleteCommand(message);
+
+        return message.channel.send(
             "✅ Welcome channel set to " +
             channel.toString()
         );
@@ -452,7 +462,9 @@ client.on("messageCreate", async function (message) {
 
         saveData();
 
-        return message.reply(
+        await deleteCommand(message);
+
+        return message.channel.send(
             "⚠️ " +
             member.toString() +
             " has been warned.\n" +
@@ -483,7 +495,9 @@ client.on("messageCreate", async function (message) {
             guildWarnings[member.id] || [];
 
         if (warnings.length === 0) {
-            return message.reply(
+            await deleteCommand(message);
+
+            return message.channel.send(
                 "✅ " +
                 member.toString() +
                 " has no warnings."
@@ -504,7 +518,9 @@ client.on("messageCreate", async function (message) {
                 "\n";
         });
 
-        return message.reply(text);
+        await deleteCommand(message);
+
+        return message.channel.send(text);
     }
 
     /* ========================= CLEAR WARNINGS ========================= */
@@ -534,7 +550,9 @@ client.on("messageCreate", async function (message) {
             saveData();
         }
 
-        return message.reply(
+        await deleteCommand(message);
+
+        return message.channel.send(
             "✅ Cleared all warnings for " +
             member.toString() +
             "."
@@ -577,7 +595,9 @@ client.on("messageCreate", async function (message) {
             reason: reason
         });
 
-        return message.reply(
+        await deleteCommand(message);
+
+        return message.channel.send(
             "🔨 Banned **" +
             member.user.tag +
             "**."
@@ -609,7 +629,9 @@ client.on("messageCreate", async function (message) {
         try {
             await message.guild.members.unban(userId);
 
-            return message.reply(
+            await deleteCommand(message);
+
+            return message.channel.send(
                 "✅ Unbanned `" +
                 userId +
                 "`."
@@ -654,7 +676,9 @@ client.on("messageCreate", async function (message) {
             "No reason provided"
         );
 
-        return message.reply(
+        await deleteCommand(message);
+
+        return message.channel.send(
             "👢 Kicked **" +
             member.user.tag +
             "**."
@@ -707,7 +731,9 @@ client.on("messageCreate", async function (message) {
             "Moderator timeout"
         );
 
-        return message.reply(
+        await deleteCommand(message);
+
+        return message.channel.send(
             "🔇 " +
             member.toString() +
             " timed out for **" +
@@ -740,7 +766,9 @@ client.on("messageCreate", async function (message) {
 
         await member.timeout(null);
 
-        return message.reply(
+        await deleteCommand(message);
+
+        return message.channel.send(
             "🔊 " +
             member.toString() +
             " has been unmuted."
@@ -779,6 +807,8 @@ client.on("messageCreate", async function (message) {
                 true
             );
 
+        await deleteCommand(message);
+
         return message.channel.send(
             "🧹 Deleted **" +
             deleted.size +
@@ -807,7 +837,9 @@ client.on("messageCreate", async function (message) {
             }
         );
 
-        return message.reply(
+        await deleteCommand(message);
+
+        return message.channel.send(
             "🔒 Channel locked."
         );
     }
@@ -833,7 +865,9 @@ client.on("messageCreate", async function (message) {
             }
         );
 
-        return message.reply(
+        await deleteCommand(message);
+
+        return message.channel.send(
             "🔓 Channel unlocked."
         );
     }
@@ -868,7 +902,9 @@ client.on("messageCreate", async function (message) {
             seconds
         );
 
-        return message.reply(
+        await deleteCommand(message);
+
+        return message.channel.send(
             "🐌 Slowmode set to **" +
             seconds +
             " seconds**."
@@ -908,7 +944,9 @@ client.on("messageCreate", async function (message) {
 
         await member.setNickname(nickname);
 
-        return message.reply(
+        await deleteCommand(message);
+
+        return message.channel.send(
             "✅ Nickname changed to **" +
             nickname +
             "**."
@@ -1000,7 +1038,9 @@ client.on("messageCreate", async function (message) {
         try {
             await member.roles.add(role);
 
-            return message.reply(
+            await deleteCommand(message);
+
+            return message.channel.send(
                 "✅ Gave " +
                 member.toString() +
                 " the **" +
@@ -1023,7 +1063,9 @@ client.on("messageCreate", async function (message) {
             getMember(message, args[0]) ||
             message.member;
 
-        return message.reply(
+        await deleteCommand(message);
+
+        return message.channel.send(
             "👤 **USER INFO**\n\n" +
             "Username: **" +
             member.user.tag +
@@ -1042,7 +1084,9 @@ client.on("messageCreate", async function (message) {
     /* ========================= SERVERINFO ========================= */
 
     if (cmd === "serverinfo") {
-        return message.reply(
+        await deleteCommand(message);
+
+        return message.channel.send(
             "🏠 **SERVER INFO**\n\n" +
             "Name: **" +
             message.guild.name +
@@ -1075,13 +1119,6 @@ client.on("messageCreate", async function (message) {
                 "❌ You need **Manage Messages**."
             );
         }
-
-        /*
-         * This takes EVERYTHING after --say directly
-         * from the original message.
-         *
-         * This means line breaks are preserved.
-         */
 
         const text = message.content
             .slice(PREFIX.length + 3)
@@ -1157,7 +1194,9 @@ client.on("messageCreate", async function (message) {
             components: [row]
         });
 
-        return message.reply(
+        await deleteCommand(message);
+
+        return message.channel.send(
             "✅ Ticket system configured."
         );
     }
@@ -1194,6 +1233,8 @@ client.on("messageCreate", async function (message) {
                 "❌ Usage: `--giveaway 10m 1 Prize`"
             );
         }
+
+        await deleteCommand(message);
 
         const id =
             message.guild.id +
@@ -1243,9 +1284,10 @@ client.on("messageCreate", async function (message) {
                     Math.floor(
                         (Date.now() +
                             duration) /
-                            1000
+                        1000
                     ) +
-                    ":R>\n\n" +
+                    ":R>\n" +
+                    "Entries: **0**\n\n" +
                     "Click the button below to enter!",
                 components: [row]
             });
@@ -1295,7 +1337,7 @@ client.on("messageCreate", async function (message) {
                         entrants[
                             Math.floor(
                                 Math.random() *
-                                    entrants.length
+                                entrants.length
                             )
                         ];
 
@@ -1558,6 +1600,27 @@ client.on(
             giveaway.entrants.add(
                 interaction.user.id
             );
+
+            const giveawayMessage =
+                await interaction.channel.messages.fetch(
+                    interaction.message.id
+                ).catch(function () {
+                    return null;
+                });
+
+            if (giveawayMessage) {
+                const currentText =
+                    giveawayMessage.content.replace(
+                        /Entries: \*\*\d+\*\*/,
+                        "Entries: **" +
+                        giveaway.entrants.size +
+                        "**"
+                    );
+
+                await giveawayMessage.edit({
+                    content: currentText
+                }).catch(function () {});
+            }
 
             return interaction.reply({
                 content:
