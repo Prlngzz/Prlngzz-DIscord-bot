@@ -53,6 +53,10 @@ function hasPermission(message, permission) {
     return message.member.permissions.has(permission);
 }
 
+function getMembers(message) {
+    return Array.from(message.mentions.members.values());
+}
+
 function getMember(message, value) {
     if (!value) return null;
 
@@ -311,22 +315,22 @@ client.on("messageCreate", async function (message) {
             "━━━━━━━━━━━━━━━━━━━━\n\n" +
 
             "🔨 **MODERATION**\n" +
-            "`--ban @user`\n" +
+            "`--ban @user @user2`\n" +
             "`--unban USER_ID`\n" +
-            "`--kick @user`\n" +
-            "`--mute @user 10m`\n" +
-            "`--unmute @user`\n" +
-            "`--timeout @user 10m`\n" +
-            "`--warn @user reason`\n" +
+            "`--kick @user @user2`\n" +
+            "`--mute @user @user2 10m`\n" +
+            "`--unmute @user @user2`\n" +
+            "`--timeout @user @user2 10m`\n" +
+            "`--warn @user @user2 reason`\n" +
             "`--warnings @user`\n" +
-            "`--clearwarnings @user`\n" +
+            "`--clearwarnings @user @user2`\n" +
             "`--clear 10`\n" +
             "`--purge 10`\n" +
             "`--lock`\n" +
             "`--unlock`\n" +
             "`--slowmode 5`\n" +
-            "`--nick @user NewName`\n" +
-            "`--role @user customer`\n\n" +
+            "`--nick @user @user2 NewName`\n" +
+            "`--role @user @user2 customer`\n\n" +
 
             "━━━━━━━━━━━━━━━━━━━━\n\n" +
 
@@ -354,22 +358,22 @@ client.on("messageCreate", async function (message) {
             "🐕 **PRLNGZZ DOG**\n\n" +
 
             "**Moderation**\n" +
-            "`--ban @user`\n" +
+            "`--ban @user @user2`\n" +
             "`--unban USER_ID`\n" +
-            "`--kick @user`\n" +
-            "`--mute @user 10m`\n" +
-            "`--unmute @user`\n" +
-            "`--timeout @user 10m`\n" +
-            "`--warn @user reason`\n" +
+            "`--kick @user @user2`\n" +
+            "`--mute @user @user2 10m`\n" +
+            "`--unmute @user @user2`\n" +
+            "`--timeout @user @user2 10m`\n" +
+            "`--warn @user @user2 reason`\n" +
             "`--warnings @user`\n" +
-            "`--clearwarnings @user`\n" +
+            "`--clearwarnings @user @user2`\n" +
             "`--clear 10`\n" +
             "`--purge 10`\n" +
             "`--lock`\n" +
             "`--unlock`\n" +
             "`--slowmode 5`\n" +
-            "`--nick @user Name`\n" +
-            "`--role @user customer`\n\n" +
+            "`--nick @user @user2 Name`\n" +
+            "`--role @user @user2 customer`\n\n" +
 
             "**Server**\n" +
             "`--setwelcome #channel`\n" +
@@ -432,16 +436,18 @@ client.on("messageCreate", async function (message) {
             );
         }
 
-        const member = getMember(message, args[0]);
+        const members = getMembers(message);
 
-        if (!member) {
+        if (members.length === 0) {
             return message.reply(
-                "❌ Usage: `--warn @user reason`"
+                "❌ Usage: `--warn @user @user2 reason`"
             );
         }
 
         const reason =
-            args.slice(1).join(" ") ||
+            args.filter(function (arg) {
+                return !arg.startsWith("<@");
+            }).join(" ") ||
             "No reason provided";
 
         const guildId = message.guild.id;
@@ -450,15 +456,21 @@ client.on("messageCreate", async function (message) {
             data.warnings[guildId] = {};
         }
 
-        if (!data.warnings[guildId][member.id]) {
-            data.warnings[guildId][member.id] = [];
-        }
+        const warned = [];
 
-        data.warnings[guildId][member.id].push({
-            reason: reason,
-            moderator: message.author.id,
-            timestamp: Date.now()
-        });
+        for (const member of members) {
+            if (!data.warnings[guildId][member.id]) {
+                data.warnings[guildId][member.id] = [];
+            }
+
+            data.warnings[guildId][member.id].push({
+                reason: reason,
+                moderator: message.author.id,
+                timestamp: Date.now()
+            });
+
+            warned.push(member.toString());
+        }
 
         saveData();
 
@@ -466,13 +478,10 @@ client.on("messageCreate", async function (message) {
 
         return message.channel.send(
             "⚠️ " +
-            member.toString() +
-            " has been warned.\n" +
+            warned.join(", ") +
+            " have been warned.\n" +
             "Reason: **" +
             reason +
-            "**\n" +
-            "Warnings: **" +
-            data.warnings[guildId][member.id].length +
             "**"
         );
     }
@@ -537,16 +546,19 @@ client.on("messageCreate", async function (message) {
             );
         }
 
-        const member = getMember(message, args[0]);
+        const members = getMembers(message);
 
-        if (!member) {
+        if (members.length === 0) {
             return message.reply(
-                "❌ Usage: `--clearwarnings @user`"
+                "❌ Usage: `--clearwarnings @user @user2`"
             );
         }
 
         if (data.warnings[message.guild.id]) {
-            delete data.warnings[message.guild.id][member.id];
+            for (const member of members) {
+                delete data.warnings[message.guild.id][member.id];
+            }
+
             saveData();
         }
 
@@ -554,7 +566,9 @@ client.on("messageCreate", async function (message) {
 
         return message.channel.send(
             "✅ Cleared all warnings for " +
-            member.toString() +
+            members.map(function (member) {
+                return member.toString();
+            }).join(", ") +
             "."
         );
     }
@@ -573,35 +587,59 @@ client.on("messageCreate", async function (message) {
             );
         }
 
-        const member = getMember(message, args[0]);
+        const members = getMembers(message);
 
-        if (!member) {
+        if (members.length === 0) {
             return message.reply(
-                "❌ Usage: `--ban @user`"
-            );
-        }
-
-        if (!member.bannable) {
-            return message.reply(
-                "❌ I can't ban that member."
+                "❌ Usage: `--ban @user @user2 reason`"
             );
         }
 
         const reason =
-            args.slice(1).join(" ") ||
+            args.filter(function (arg) {
+                return !arg.startsWith("<@");
+            }).join(" ") ||
             "No reason provided";
 
-        await member.ban({
-            reason: reason
-        });
+        const banned = [];
+        const failed = [];
+
+        for (const member of members) {
+            if (!member.bannable) {
+                failed.push(member.toString());
+                continue;
+            }
+
+            try {
+                await member.ban({
+                    reason: reason
+                });
+
+                banned.push(member.user.tag);
+            } catch (error) {
+                failed.push(member.toString());
+            }
+        }
 
         await deleteCommand(message);
 
-        return message.channel.send(
-            "🔨 Banned **" +
-            member.user.tag +
-            "**."
-        );
+        let response = "";
+
+        if (banned.length > 0) {
+            response +=
+                "🔨 Banned **" +
+                banned.join(", ") +
+                "**.\n";
+        }
+
+        if (failed.length > 0) {
+            response +=
+                "❌ Couldn't ban " +
+                failed.join(", ") +
+                ".";
+        }
+
+        return message.channel.send(response);
     }
 
     /* ========================= UNBAN ========================= */
@@ -618,29 +656,45 @@ client.on("messageCreate", async function (message) {
             );
         }
 
-        const userId = args[0];
+        const userIds = args;
 
-        if (!userId) {
+        if (userIds.length === 0) {
             return message.reply(
-                "❌ Usage: `--unban USER_ID`"
+                "❌ Usage: `--unban USER_ID USER_ID`"
             );
         }
 
-        try {
-            await message.guild.members.unban(userId);
+        const unbanned = [];
+        const failed = [];
 
-            await deleteCommand(message);
+        for (const userId of userIds) {
+            try {
+                await message.guild.members.unban(userId);
+                unbanned.push(userId);
+            } catch (error) {
+                failed.push(userId);
+            }
+        }
 
-            return message.channel.send(
+        await deleteCommand(message);
+
+        let response = "";
+
+        if (unbanned.length > 0) {
+            response +=
                 "✅ Unbanned `" +
-                userId +
-                "`."
-            );
-        } catch (error) {
-            return message.reply(
-                "❌ Could not unban that user."
-            );
+                unbanned.join("`, `") +
+                "`.\n";
         }
+
+        if (failed.length > 0) {
+            response +=
+                "❌ Couldn't unban `" +
+                failed.join("`, `") +
+                "`.";
+        }
+
+        return message.channel.send(response);
     }
 
     /* ========================= KICK ========================= */
@@ -657,32 +711,56 @@ client.on("messageCreate", async function (message) {
             );
         }
 
-        const member = getMember(message, args[0]);
+        const members = getMembers(message);
 
-        if (!member) {
+        if (members.length === 0) {
             return message.reply(
-                "❌ Usage: `--kick @user`"
+                "❌ Usage: `--kick @user @user2 reason`"
             );
         }
 
-        if (!member.kickable) {
-            return message.reply(
-                "❌ I can't kick that member."
-            );
-        }
+        const reason =
+            args.filter(function (arg) {
+                return !arg.startsWith("<@");
+            }).join(" ") ||
+            "No reason provided";
 
-        await member.kick(
-            args.slice(1).join(" ") ||
-            "No reason provided"
-        );
+        const kicked = [];
+        const failed = [];
+
+        for (const member of members) {
+            if (!member.kickable) {
+                failed.push(member.toString());
+                continue;
+            }
+
+            try {
+                await member.kick(reason);
+                kicked.push(member.user.tag);
+            } catch (error) {
+                failed.push(member.toString());
+            }
+        }
 
         await deleteCommand(message);
 
-        return message.channel.send(
-            "👢 Kicked **" +
-            member.user.tag +
-            "**."
-        );
+        let response = "";
+
+        if (kicked.length > 0) {
+            response +=
+                "👢 Kicked **" +
+                kicked.join(", ") +
+                "**.\n";
+        }
+
+        if (failed.length > 0) {
+            response +=
+                "❌ Couldn't kick " +
+                failed.join(", ") +
+                ".";
+        }
+
+        return message.channel.send(response);
     }
 
     /* ========================= MUTE / TIMEOUT ========================= */
@@ -699,22 +777,22 @@ client.on("messageCreate", async function (message) {
             );
         }
 
-        const member = getMember(message, args[0]);
+        const members = getMembers(message);
 
-        if (!member) {
+        if (members.length === 0) {
             return message.reply(
-                "❌ Usage: `--mute @user 10m`"
+                "❌ Usage: `--mute @user @user2 10m`"
             );
         }
 
         let duration = 10 * 60 * 1000;
 
-        if (args[1]) {
-            const parsed = parseDuration(args[1]);
+        const durationArg = args.find(function (arg) {
+            return parseDuration(arg) !== null;
+        });
 
-            if (parsed) {
-                duration = parsed;
-            }
+        if (durationArg) {
+            duration = parseDuration(durationArg);
         }
 
         const maximum =
@@ -726,20 +804,39 @@ client.on("messageCreate", async function (message) {
             );
         }
 
-        await member.timeout(
-            duration,
-            "Moderator timeout"
-        );
+        const timedOut = [];
+        const failed = [];
+
+        for (const member of members) {
+            try {
+                await member.timeout(
+                    duration,
+                    "Moderator timeout"
+                );
+
+                timedOut.push(member.toString());
+            } catch (error) {
+                failed.push(member.toString());
+            }
+        }
 
         await deleteCommand(message);
 
-        return message.channel.send(
+        let response =
             "🔇 " +
-            member.toString() +
+            timedOut.join(", ") +
             " timed out for **" +
             durationText(duration) +
-            "**."
-        );
+            "**.";
+
+        if (failed.length > 0) {
+            response +=
+                "\n❌ Couldn't timeout " +
+                failed.join(", ") +
+                ".";
+        }
+
+        return message.channel.send(response);
     }
 
     /* ========================= UNMUTE ========================= */
@@ -756,23 +853,41 @@ client.on("messageCreate", async function (message) {
             );
         }
 
-        const member = getMember(message, args[0]);
+        const members = getMembers(message);
 
-        if (!member) {
+        if (members.length === 0) {
             return message.reply(
-                "❌ Usage: `--unmute @user`"
+                "❌ Usage: `--unmute @user @user2`"
             );
         }
 
-        await member.timeout(null);
+        const unmuted = [];
+        const failed = [];
+
+        for (const member of members) {
+            try {
+                await member.timeout(null);
+                unmuted.push(member.toString());
+            } catch (error) {
+                failed.push(member.toString());
+            }
+        }
 
         await deleteCommand(message);
 
-        return message.channel.send(
+        let response =
             "🔊 " +
-            member.toString() +
-            " has been unmuted."
-        );
+            unmuted.join(", ") +
+            " have been unmuted.";
+
+        if (failed.length > 0) {
+            response +=
+                "\n❌ Couldn't unmute " +
+                failed.join(", ") +
+                ".";
+        }
+
+        return message.channel.send(response);
     }
 
     /* ========================= CLEAR / PURGE ========================= */
@@ -925,16 +1040,18 @@ client.on("messageCreate", async function (message) {
             );
         }
 
-        const member = getMember(message, args[0]);
+        const members = getMembers(message);
 
-        if (!member) {
+        if (members.length === 0) {
             return message.reply(
-                "❌ Usage: `--nick @user NewName`"
+                "❌ Usage: `--nick @user @user2 NewName`"
             );
         }
 
         const nickname =
-            args.slice(1).join(" ");
+            args.filter(function (arg) {
+                return !arg.startsWith("<@");
+            }).join(" ");
 
         if (!nickname) {
             return message.reply(
@@ -942,15 +1059,35 @@ client.on("messageCreate", async function (message) {
             );
         }
 
-        await member.setNickname(nickname);
+        const changed = [];
+        const failed = [];
+
+        for (const member of members) {
+            try {
+                await member.setNickname(nickname);
+                changed.push(member.toString());
+            } catch (error) {
+                failed.push(member.toString());
+            }
+        }
 
         await deleteCommand(message);
 
-        return message.channel.send(
-            "✅ Nickname changed to **" +
+        let response =
+            "✅ Changed nickname for " +
+            changed.join(", ") +
+            " to **" +
             nickname +
-            "**."
-        );
+            "**.";
+
+        if (failed.length > 0) {
+            response +=
+                "\n❌ Couldn't change " +
+                failed.join(", ") +
+                ".";
+        }
+
+        return message.channel.send(response);
     }
 
     /* ========================= ROLE ========================= */
@@ -967,20 +1104,22 @@ client.on("messageCreate", async function (message) {
             );
         }
 
-        const member = getMember(message, args[0]);
+        const members = getMembers(message);
 
-        if (!member) {
+        if (members.length === 0) {
             return message.reply(
-                "❌ Usage: `--role @user customer`"
+                "❌ Usage: `--role @user @user2 customer`"
             );
         }
 
         const roleName =
-            args.slice(1).join(" ");
+            args.filter(function (arg) {
+                return !arg.startsWith("<@");
+            }).join(" ");
 
         if (!roleName) {
             return message.reply(
-                "❌ Usage: `--role @user customer`"
+                "❌ Usage: `--role @user @user2 customer`"
             );
         }
 
@@ -1026,34 +1165,43 @@ client.on("messageCreate", async function (message) {
             );
         }
 
-        if (
-            member.roles.highest.position >=
-            botMember.roles.highest.position
-        ) {
-            return message.reply(
-                "❌ I can't manage that member."
-            );
+        const added = [];
+        const failed = [];
+
+        for (const member of members) {
+            if (
+                member.roles.highest.position >=
+                botMember.roles.highest.position
+            ) {
+                failed.push(member.toString());
+                continue;
+            }
+
+            try {
+                await member.roles.add(role);
+                added.push(member.toString());
+            } catch (error) {
+                failed.push(member.toString());
+            }
         }
 
-        try {
-            await member.roles.add(role);
+        await deleteCommand(message);
 
-            await deleteCommand(message);
+        let response =
+            "✅ Gave " +
+            added.join(", ") +
+            " the **" +
+            role.name +
+            "** role.";
 
-            return message.channel.send(
-                "✅ Gave " +
-                member.toString() +
-                " the **" +
-                role.name +
-                "** role."
-            );
-        } catch (error) {
-            console.error(error);
-
-            return message.reply(
-                "❌ Couldn't give that role."
-            );
+        if (failed.length > 0) {
+            response +=
+                "\n❌ Couldn't give the role to " +
+                failed.join(", ") +
+                ".";
         }
+
+        return message.channel.send(response);
     }
 
     /* ========================= USERINFO ========================= */
@@ -1196,9 +1344,7 @@ client.on("messageCreate", async function (message) {
 
         await deleteCommand(message);
 
-        return message.channel.send(
-            "✅ Ticket system configured."
-        );
+        return;
     }
 
     /* ========================= GIVEAWAY ========================= */
