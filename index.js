@@ -1,10 +1,17 @@
 const {
     Client,
     GatewayIntentBits,
-    PermissionsBitField
+    PermissionsBitField,
+    ChannelType,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle
 } = require("discord.js");
 
 const fs = require("fs");
+
+const PREFIX = "--";
+const DATA_FILE = "./fleasion-data.json";
 
 const client = new Client({
     intents: [
@@ -14,9 +21,6 @@ const client = new Client({
         GatewayIntentBits.GuildMembers
     ]
 });
-
-const PREFIX = "--";
-const DATA_FILE = "./fleasion-data.json";
 
 let data = {
     warnings: {},
@@ -29,712 +33,394 @@ if (fs.existsSync(DATA_FILE)) {
     try {
         data = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
     } catch (error) {
-        console.log("Could not load data file:", error);
+        console.log("Could not load data file.");
     }
 }
 
 function saveData() {
-    fs.writeFileSync(
-        DATA_FILE,
-        JSON.stringify(data, null, 2)
-    );
-}
-
-function hasPermission(message, permission) {
-    return message.member &&
-        message.member.permissions.has(permission);
-}
-
-async function deleteCommand(message) {
     try {
-        await message.delete();
+        fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
     } catch (error) {
-        console.log("Could not delete command:", error.message);
+        console.log("Could not save data.");
     }
 }
 
-function getUserKey(guildId, userId) {
-    return guildId + "_" + userId;
+async function deleteCommand(message) {
+    await message.delete().catch(function () {});
 }
 
-function parseDuration(input) {
-    if (!input) return null;
+function hasPermission(message, permission) {
+    return message.member.permissions.has(permission);
+}
 
-    const match = input.match(/^(\d+)(s|m|h|d|w)$/i);
+function getMembers(message) {
+    return Array.from(message.mentions.members.values());
+}
+
+function getMember(message, value) {
+    if (!value) return null;
+
+    const mentioned = message.mentions.members.first();
+
+    if (mentioned) {
+        return mentioned;
+    }
+
+    return message.guild.members.cache.get(value) || null;
+}
+
+function parseDuration(value) {
+    if (!value) return null;
+
+    const match = value.match(/^(\d+)(s|m|h|d)$/i);
 
     if (!match) return null;
 
     const amount = Number(match[1]);
     const unit = match[2].toLowerCase();
 
-    const multipliers = {
-        s: 1000,
-        m: 60 * 1000,
-        h: 60 * 60 * 1000,
-        d: 24 * 60 * 60 * 1000,
-        w: 7 * 24 * 60 * 60 * 1000
-    };
+    if (unit === "s") return amount * 1000;
+    if (unit === "m") return amount * 60 * 1000;
+    if (unit === "h") return amount * 60 * 60 * 1000;
+    if (unit === "d") return amount * 24 * 60 * 60 * 1000;
 
-    return amount * multipliers[unit];
+    return null;
 }
 
-function formatDuration(ms) {
+function durationText(ms) {
     const seconds = Math.floor(ms / 1000);
 
     if (seconds < 60) {
-        return seconds + "s";
+        return String(seconds) + "s";
     }
 
     const minutes = Math.floor(seconds / 60);
 
     if (minutes < 60) {
-        return minutes + "m";
+        return String(minutes) + "m";
     }
 
     const hours = Math.floor(minutes / 60);
 
     if (hours < 24) {
-        return hours + "h";
+        return String(hours) + "h";
     }
 
-    return Math.floor(hours / 24) + "d";
+    return String(Math.floor(hours / 24)) + "d";
 }
 
+const spamTracker = new Map();
+const raidTracker = new Map();
+const giveaways = new Map();
 
-/* ========================= READY ========================= */
-
-client.once("ready", () => {
-    console.log(
-        "PRLNGZZ DOG online as " +
-        client.user.tag
-    );
+client.once("ready", function () {
+    console.log("PRLNGZZ DOG online as " + client.user.tag);
 
     client.user.setActivity("--help");
 });
 
-
-/* ========================= WELCOME ========================= */
-
-client.on("guildMemberAdd", async (member) => {
-    const channelId = data.welcomeChannels[member.guild.id];
-
-    if (!channelId) return;
-
-    const channel = member.guild.channels.cache.get(channelId);
-
-    if (!channel) return;
-
-    channel.send(
-        "👋 Welcome **" +
-        member.user.tag +
-        "** to **" +
-        member.guild.name +
-        "**!"
-    ).catch(() => {});
-});
-
-
-/* ========================= ANTI RAID ========================= */
-
-const joinTracker = new Map();
-
-client.on("guildMemberAdd", async (member) => {
+client.on("guildMemberAdd", async function (member) {
     const guildId = member.guild.id;
 
-    if (!joinTracker.has(guildId)) {
-        joinTracker.set(guildId, []);
+    if (!raidTracker.has(guildId)) {
+        raidTracker.set(guildId, []);
     }
 
-    const joins = joinTracker.get(guildId);
-    const now = Date.now();
+    const joins = raidTracker.get(guildId);
 
-    joins.push(now);
+    joins.push(Date.now());
 
-    while (joins.length && now - joins[0] > 10000) {
-        joins.shift();
-    }
+    const recent = joins.filter(function (time) {
+        return Date.now() - time <= 10000;
+    });
 
-    if (joins.length >= 5) {
+    raidTracker.set(guildId, recent);
+
+    if (recent.length >= 5 && !data.raidMode[guildId]) {
         data.raidMode[guildId] = true;
+
         saveData();
 
-        const owner = await member.guild.fetchOwner().catch(() => null);
+        try {
+            const owner = await member.guild.fetchOwner();
 
-        if (owner) {
-            owner.send(
-                "🚨 **ANTI-RAID ALERT**\n" +
-                "5+ members joined within 10 seconds.\n" +
-                "Raid mode has been enabled."
-            ).catch(() => {});
+            await owner.send(
+                "🚨 RAID ALERT\n\n" +
+                "5 or more members joined within 10 seconds in " +
+                member.guild.name +
+                ".\n\n" +
+                "Raid mode activated for 60 seconds."
+            );
+        } catch (error) {
+            console.log("Could not DM server owner.");
         }
 
-        setTimeout(() => {
+        setTimeout(function () {
             data.raidMode[guildId] = false;
             saveData();
         }, 60000);
     }
 
-    if (data.raidMode[guildId]) {
-        try {
-            if (
-                member.guild.members.me &&
-                member.guild.members.me.permissions.has(
-                    PermissionsBitField.Flags.KickMembers
-                )
-            ) {
-                await member.kick("Anti-raid protection");
-            }
-        } catch (error) {
-            console.log("Anti-raid kick failed:", error.message);
-        }
-    }
+    const welcomeChannelId = data.welcomeChannels[guildId];
+
+    if (!welcomeChannelId) return;
+
+    const channel = member.guild.channels.cache.get(welcomeChannelId);
+
+    if (!channel) return;
+
+    channel.send(
+        "👋 Welcome " +
+        member.user.toString() +
+        " to **" +
+        member.guild.name +
+        "**!"
+    ).catch(function () {});
 });
 
-
-/* ========================= ANTI SPAM ========================= */
-
-const spamTracker = new Map();
-
-client.on("messageCreate", async (message) => {
-    if (message.author.bot) return;
+client.on("messageCreate", async function (message) {
     if (!message.guild) return;
+    if (message.author.bot) return;
+
+    const content = message.content.trim();
+
+    /* ========================= ANTI-SPAM ========================= */
 
     if (
-        message.member &&
-        message.member.permissions.has(
+        !message.member.permissions.has(
             PermissionsBitField.Flags.ManageMessages
-        )
+        ) &&
+        !content.startsWith(PREFIX)
     ) {
-        return;
-    }
+        const userId = message.author.id;
 
-    const key = getUserKey(
-        message.guild.id,
-        message.author.id
-    );
+        if (!spamTracker.has(userId)) {
+            spamTracker.set(userId, []);
+        }
 
-    if (!spamTracker.has(key)) {
-        spamTracker.set(key, []);
-    }
+        const messages = spamTracker.get(userId);
 
-    const messages = spamTracker.get(key);
-    const now = Date.now();
+        messages.push(Date.now());
 
-    messages.push(now);
+        const recent = messages.filter(function (time) {
+            return Date.now() - time <= 6000;
+        });
 
-    while (
-        messages.length &&
-        now - messages[0] > 6000
-    ) {
-        messages.shift();
-    }
+        spamTracker.set(userId, recent);
 
-    if (messages.length >= 8) {
-        messages.length = 0;
+        if (recent.length >= 8) {
+            spamTracker.delete(userId);
 
-        try {
-            if (
-                message.member &&
-                message.member.moderatable
-            ) {
-                await message.member.timeout(
-                    15000,
-                    "Anti-spam"
-                );
+            try {
+                await message.member.timeout(15000, "Anti-spam");
 
                 await message.channel.send(
                     "🛑 " +
-                    message.author +
-                    " was timed out for spam."
+                    message.author.toString() +
+                    " has been timed out for **15 seconds** for spamming."
                 );
+            } catch (error) {
+                console.log("Could not timeout spammer.");
             }
-        } catch (error) {
-            console.log(
-                "Anti-spam error:",
-                error.message
-            );
         }
     }
-});
 
+    /* ========================= AUTOMOD ========================= */
 
-/* ========================= MAIN COMMAND HANDLER ========================= */
-
-client.on("messageCreate", async (message) => {
-
-    if (message.author.bot) return;
-    if (!message.guild) return;
-
-    if (!message.content.startsWith(PREFIX)) {
-        /* ========================= AUTOMOD ========================= */
-
+    if (
+        !content.startsWith(PREFIX) &&
+        !message.member.permissions.has(
+            PermissionsBitField.Flags.ManageMessages
+        )
+    ) {
         const inviteRegex =
             /(discord\.gg\/|discord\.com\/invite\/)/i;
 
-        const mentionCount =
-            message.mentions.users.size;
+        if (inviteRegex.test(content)) {
+            try {
+                await message.delete();
 
-        if (
-            inviteRegex.test(message.content) ||
-            mentionCount >= 6
-        ) {
-            if (
-                message.member &&
-                !message.member.permissions.has(
-                    PermissionsBitField.Flags.ManageMessages
-                )
-            ) {
-                try {
-                    await message.delete();
+                await message.channel.send(
+                    "🚫 " +
+                    message.author.toString() +
+                    ", Discord invites are not allowed here."
+                );
+            } catch (error) {}
 
-                    await message.channel.send(
-                        "🛡️ " +
-                        message.author +
-                        " your message was removed by automod."
-                    ).then(msg => {
-                        setTimeout(() => {
-                            msg.delete().catch(() => {});
-                        }, 5000);
-                    });
-                } catch (error) {
-                    console.log(
-                        "Automod error:",
-                        error.message
-                    );
-                }
-            }
+            return;
         }
 
-        return;
+        if (message.mentions.users.size >= 6) {
+            try {
+                await message.delete();
+
+                await message.channel.send(
+                    "🚫 " +
+                    message.author.toString() +
+                    ", too many mentions."
+                );
+            } catch (error) {}
+
+            return;
+        }
     }
 
-    const args = message.content
+    if (!content.startsWith(PREFIX)) return;
+
+    const args = content
         .slice(PREFIX.length)
         .trim()
         .split(/\s+/);
 
-    const cmd = args.shift().toLowerCase();
+    const command = args.shift();
 
+    if (!command) return;
 
-    /* ========================= HELP ========================= */
-
-    if (cmd === "help") {
-        return message.reply(
-            "🤖 **PRLNGZZ DOG COMMANDS**\n\n" +
-
-            "**Moderation**\n" +
-            "`--ban @user [reason]`\n" +
-            "`--unban userID`\n" +
-            "`--kick @user [reason]`\n" +
-            "`--mute @user 10s`\n" +
-            "`--unmute @user`\n" +
-            "`--timeout @user 10m`\n" +
-            "`--warn @user [reason]`\n" +
-            "`--warnings @user`\n" +
-            "`--clearwarnings @user`\n" +
-            "`--clear 10`\n" +
-            "`--purge 10`\n" +
-            "`--lock`\n" +
-            "`--unlock`\n" +
-            "`--slowmode 10`\n" +
-            "`--nick @user nickname`\n" +
-            "`--userinfo @user`\n" +
-            "`--serverinfo`\n" +
-            "`--say message`\n" +
-            "`--role @user customer`\n\n" +
-
-            "**Server**\n" +
-            "`--setup`\n" +
-            "`--setwelcome #channel`\n" +
-            "`--ticketsetup #category`\n" +
-            "`--giveaway 10m 1 500 Robux`"
-        );
-    }
-
+    const cmd = command.toLowerCase();
 
     /* ========================= SETUP ========================= */
 
     if (cmd === "setup") {
-        if (
-            !hasPermission(
-                message,
-                PermissionsBitField.Flags.Administrator
-            )
-        ) {
-            return message.reply(
-                "❌ You need **Administrator**."
-            );
-        }
+        await deleteCommand(message);
 
-        return message.reply(
-            "⚙️ **PRLNGZZ DOG SETUP**\n\n" +
+        return message.channel.send(
+            "🐕 **PRLNGZZ DOG SETUP**\n\n" +
+
+            "━━━━━━━━━━━━━━━━━━━━\n\n" +
+
+            "👋 **WELCOME**\n" +
             "`--setwelcome #channel`\n" +
+            "Sets the welcome channel.\n\n" +
+
+            "━━━━━━━━━━━━━━━━━━━━\n\n" +
+
+            "🎫 **TICKETS**\n" +
             "`--ticketsetup #category`\n" +
-            "`--giveaway 10m 1 500 Robux`\n\n" +
-            "**Moderation**\n" +
-            "`--ban @user reason`\n" +
-            "`--kick @user reason`\n" +
-            "`--mute @user 10s`\n" +
-            "`--timeout @user 10m`\n" +
-            "`--warn @user reason`\n" +
+            "Creates the ticket system.\n\n" +
+
+            "━━━━━━━━━━━━━━━━━━━━\n\n" +
+
+            "🎉 **GIVEAWAYS**\n" +
+            "`--giveaway 10m 1 500 Robux`\n" +
+            "`--giveaway 1h 2 RIVALS Skin`\n" +
+            "`--giveaway 1d 1 Skin Case`\n\n" +
+
+            "━━━━━━━━━━━━━━━━━━━━\n\n" +
+
+            "🛡️ **PROTECTION**\n" +
+            "Automod: ON\n" +
+            "Anti-spam: 8 messages / 6 seconds -> 15s timeout\n" +
+            "Anti-raid: 5 joins / 10 seconds -> owner alert\n\n" +
+
+            "━━━━━━━━━━━━━━━━━━━━\n\n" +
+
+            "🔨 **MODERATION**\n" +
+            "`--ban @user @user2`\n" +
+            "`--unban USER_ID`\n" +
+            "`--kick @user @user2`\n" +
+            "`--mute @user @user2 10m`\n" +
+            "`--unmute @user @user2`\n" +
+            "`--timeout @user @user2 10m`\n" +
+            "`--warn @user @user2 reason`\n" +
+            "`--warnings @user`\n" +
+            "`--clearwarnings @user @user2`\n" +
             "`--clear 10`\n" +
+            "`--purge 10`\n" +
             "`--lock`\n" +
             "`--unlock`\n" +
-            "`--slowmode 10`"
+            "`--slowmode 5`\n" +
+            "`--nick @user @user2 NewName`\n" +
+            "`--role @user @user2 customer`\n\n" +
+
+            "━━━━━━━━━━━━━━━━━━━━\n\n" +
+
+            "📊 **INFO**\n" +
+            "`--userinfo @user`\n" +
+            "`--serverinfo`\n" +
+            "`--say message`\n\n" +
+
+            "━━━━━━━━━━━━━━━━━━━━\n\n" +
+
+            "❓ **HELP**\n" +
+            "`--help`\n" +
+            "`--setup`\n\n" +
+
+            "🐕 **PRLNGZZ DOG**"
         );
     }
 
+    /* ========================= HELP ========================= */
 
-    /* ========================= BAN ========================= */
+    if (cmd === "help") {
+        await deleteCommand(message);
 
-    if (cmd === "ban") {
+        return message.channel.send(
+            "🐕 **PRLNGZZ DOG**\n\n" +
+
+            "**Moderation**\n" +
+            "`--ban @user @user2`\n" +
+            "`--unban USER_ID`\n" +
+            "`--kick @user @user2`\n" +
+            "`--mute @user @user2 10m`\n" +
+            "`--unmute @user @user2`\n" +
+            "`--timeout @user @user2 10m`\n" +
+            "`--warn @user @user2 reason`\n" +
+            "`--warnings @user`\n" +
+            "`--clearwarnings @user @user2`\n" +
+            "`--clear 10`\n" +
+            "`--purge 10`\n" +
+            "`--lock`\n" +
+            "`--unlock`\n" +
+            "`--slowmode 5`\n" +
+            "`--nick @user @user2 Name`\n" +
+            "`--role @user @user2 customer`\n\n" +
+
+            "**Server**\n" +
+            "`--setwelcome #channel`\n" +
+            "`--ticketsetup #category`\n" +
+            "`--giveaway 10m 1 Prize`\n\n" +
+
+            "**Info**\n" +
+            "`--userinfo @user`\n" +
+            "`--serverinfo`\n" +
+            "`--say message`\n\n" +
+
+            "**Setup**\n" +
+            "`--setup`"
+        );
+    }
+
+    /* ========================= SETWELCOME ========================= */
+
+    if (cmd === "setwelcome") {
         if (
             !hasPermission(
                 message,
-                PermissionsBitField.Flags.BanMembers
+                PermissionsBitField.Flags.ManageGuild
             )
         ) {
+            return message.reply("❌ You need **Manage Server**.");
+        }
+
+        const channel = message.mentions.channels.first();
+
+        if (!channel) {
             return message.reply(
-                "❌ You need **Ban Members**."
+                "❌ Usage: `--setwelcome #channel`"
             );
         }
 
-        const members = Array.from(
-            message.mentions.members.values()
-        );
+        data.welcomeChannels[message.guild.id] = channel.id;
 
-        if (!members.length) {
-            return message.reply(
-                "❌ Usage: `--ban @user @user2 [reason]`"
-            );
-        }
-
-        const reason = args
-            .filter(function (arg) {
-                return !arg.startsWith("<@");
-            })
-            .join(" ")
-            .trim() || "No reason provided";
-
-        const banned = [];
-        const failed = [];
-
-        for (const member of members) {
-            if (!member.bannable) {
-                failed.push(member.user.tag);
-                continue;
-            }
-
-            try {
-                await member.ban({
-                    reason: reason
-                });
-
-                banned.push(member.user.tag);
-            } catch (error) {
-                console.log(
-                    "Failed to ban " +
-                    member.user.tag +
-                    ":",
-                    error
-                );
-
-                failed.push(member.user.tag);
-            }
-        }
+        saveData();
 
         await deleteCommand(message);
 
-        let response = "";
-
-        if (banned.length) {
-            response +=
-                "🔨 Banned **" +
-                banned.join("**, **") +
-                "**.";
-
-            if (reason !== "No reason provided") {
-                response +=
-                    "\nReason: **" +
-                    reason +
-                    "**";
-            }
-        }
-
-        if (failed.length) {
-            if (response) response += "\n\n";
-
-            response +=
-                "❌ Couldn't ban **" +
-                failed.join("**, **") +
-                "**.";
-        }
-
-        return message.channel.send(response);
-    }
-
-
-    /* ========================= UNBAN ========================= */
-
-    if (cmd === "unban") {
-        if (
-            !hasPermission(
-                message,
-                PermissionsBitField.Flags.BanMembers
-            )
-        ) {
-            return message.reply(
-                "❌ You need **Ban Members**."
-            );
-        }
-
-        const userId = args[0];
-
-        if (!userId) {
-            return message.reply(
-                "❌ Usage: `--unban userID`"
-            );
-        }
-
-        try {
-            await message.guild.members.unban(userId);
-
-            await deleteCommand(message);
-
-            return message.channel.send(
-                "🔓 Unbanned **" +
-                userId +
-                "**."
-            );
-        } catch (error) {
-            return message.reply(
-                "❌ Couldn't unban that user."
-            );
-        }
-    }
-
-
-    /* ========================= KICK ========================= */
-
-    if (cmd === "kick") {
-        if (
-            !hasPermission(
-                message,
-                PermissionsBitField.Flags.KickMembers
-            )
-        ) {
-            return message.reply(
-                "❌ You need **Kick Members**."
-            );
-        }
-
-        const members = Array.from(
-            message.mentions.members.values()
+        return message.channel.send(
+            "✅ Welcome channel set to " +
+            channel.toString()
         );
-
-        if (!members.length) {
-            return message.reply(
-                "❌ Usage: `--kick @user [reason]`"
-            );
-        }
-
-        const reason = args
-            .filter(arg => !arg.startsWith("<@"))
-            .join(" ")
-            .trim() || "No reason provided";
-
-        const kicked = [];
-        const failed = [];
-
-        for (const member of members) {
-            if (!member.kickable) {
-                failed.push(member.user.tag);
-                continue;
-            }
-
-            try {
-                await member.kick(reason);
-                kicked.push(member.user.tag);
-            } catch (error) {
-                failed.push(member.user.tag);
-            }
-        }
-
-        await deleteCommand(message);
-
-        let response = "";
-
-        if (kicked.length) {
-            response =
-                "👢 Kicked **" +
-                kicked.join("**, **") +
-                "**.";
-
-            if (reason !== "No reason provided") {
-                response +=
-                    "\nReason: **" +
-                    reason +
-                    "**";
-            }
-        }
-
-        if (failed.length) {
-            if (response) response += "\n\n";
-
-            response +=
-                "❌ Couldn't kick **" +
-                failed.join("**, **") +
-                "**.";
-        }
-
-        return message.channel.send(response);
     }
-
-
-    /* ========================= MUTE ========================= */
-
-    if (cmd === "mute") {
-        if (
-            !hasPermission(
-                message,
-                PermissionsBitField.Flags.ModerateMembers
-            )
-        ) {
-            return message.reply(
-                "❌ You need **Moderate Members**."
-            );
-        }
-
-        const member =
-            message.mentions.members.first();
-
-        const duration =
-            parseDuration(args.find(arg =>
-                /^\d+(s|m|h|d|w)$/i.test(arg)
-            ));
-
-        if (!member || !duration) {
-            return message.reply(
-                "❌ Usage: `--mute @user 10s`"
-            );
-        }
-
-        try {
-            await member.timeout(
-                duration,
-                "Muted by moderator"
-            );
-
-            await deleteCommand(message);
-
-            return message.channel.send(
-                "🔇 Muted **" +
-                member.user.tag +
-                "** for **" +
-                formatDuration(duration) +
-                "**."
-            );
-        } catch (error) {
-            console.log(error);
-
-            return message.reply(
-                "❌ Couldn't mute that user."
-            );
-        }
-    }
-
-
-    /* ========================= UNMUTE ========================= */
-
-    if (cmd === "unmute") {
-        if (
-            !hasPermission(
-                message,
-                PermissionsBitField.Flags.ModerateMembers
-            )
-        ) {
-            return message.reply(
-                "❌ You need **Moderate Members**."
-            );
-        }
-
-        const member =
-            message.mentions.members.first();
-
-        if (!member) {
-            return message.reply(
-                "❌ Usage: `--unmute @user`"
-            );
-        }
-
-        try {
-            await member.timeout(null);
-
-            await deleteCommand(message);
-
-            return message.channel.send(
-                "🔊 Unmuted **" +
-                member.user.tag +
-                "**."
-            );
-        } catch (error) {
-            return message.reply(
-                "❌ Couldn't unmute that user."
-            );
-        }
-    }
-
-
-    /* ========================= TIMEOUT ========================= */
-
-    if (cmd === "timeout") {
-        if (
-            !hasPermission(
-                message,
-                PermissionsBitField.Flags.ModerateMembers
-            )
-        ) {
-            return message.reply(
-                "❌ You need **Moderate Members**."
-            );
-        }
-
-        const member =
-            message.mentions.members.first();
-
-        const duration =
-            parseDuration(args.find(arg =>
-                /^\d+(s|m|h|d|w)$/i.test(arg)
-            ));
-
-        if (!member || !duration) {
-            return message.reply(
-                "❌ Usage: `--timeout @user 10m`"
-            );
-        }
-
-        try {
-            await member.timeout(
-                duration,
-                "Timed out by moderator"
-            );
-
-            await deleteCommand(message);
-
-            return message.channel.send(
-                "⏱️ Timed out **" +
-                member.user.tag +
-                "** for **" +
-                formatDuration(duration) +
-                "**."
-            );
-        } catch (error) {
-            return message.reply(
-                "❌ Couldn't timeout that user."
-            );
-        }
-    }
-
 
     /* ========================= WARN ========================= */
 
@@ -750,79 +436,90 @@ client.on("messageCreate", async (message) => {
             );
         }
 
-        const member =
-            message.mentions.members.first();
+        const members = getMembers(message);
 
-        if (!member) {
+        if (members.length === 0) {
             return message.reply(
-                "❌ Usage: `--warn @user [reason]`"
+                "❌ Usage: `--warn @user @user2 reason`"
             );
         }
 
-        const reason = args
-            .filter(arg => !arg.startsWith("<@"))
-            .join(" ")
-            .trim() || "No reason provided";
+        const reason =
+            args.filter(function (arg) {
+                return !arg.startsWith("<@");
+            }).join(" ") ||
+            "No reason provided";
 
-        const key = getUserKey(
-            message.guild.id,
-            member.id
-        );
+        const guildId = message.guild.id;
 
-        if (!data.warnings[key]) {
-            data.warnings[key] = [];
+        if (!data.warnings[guildId]) {
+            data.warnings[guildId] = {};
         }
 
-        data.warnings[key].push({
-            reason: reason,
-            moderator: message.author.id,
-            date: Date.now()
-        });
+        const warned = [];
+
+        for (const member of members) {
+            if (!data.warnings[guildId][member.id]) {
+                data.warnings[guildId][member.id] = [];
+            }
+
+            data.warnings[guildId][member.id].push({
+                reason: reason,
+                moderator: message.author.id,
+                timestamp: Date.now()
+            });
+
+            warned.push(member.toString());
+        }
 
         saveData();
 
         await deleteCommand(message);
 
         return message.channel.send(
-            "⚠️ Warned **" +
-            member.user.tag +
-            "**.\nReason: **" +
+            "⚠️ " +
+            warned.join(", ") +
+            " have been warned.\n" +
+            "Reason: **" +
             reason +
             "**"
         );
     }
 
-
     /* ========================= WARNINGS ========================= */
 
     if (cmd === "warnings") {
-        const member =
-            message.mentions.members.first() ||
-            message.member;
+        const member = getMember(message, args[0]);
 
-        const key = getUserKey(
-            message.guild.id,
-            member.id
-        );
-
-        const warnings =
-            data.warnings[key] || [];
-
-        if (!warnings.length) {
+        if (!member) {
             return message.reply(
-                "✅ **" +
-                member.user.tag +
-                "** has no warnings."
+                "❌ Usage: `--warnings @user`"
             );
         }
 
-        let output =
+        const guildWarnings =
+            data.warnings[message.guild.id] || {};
+
+        const warnings =
+            guildWarnings[member.id] || [];
+
+        if (warnings.length === 0) {
+            await deleteCommand(message);
+
+            return message.channel.send(
+                "✅ " +
+                member.toString() +
+                " has no warnings."
+            );
+        }
+
+        let text =
             "⚠️ **Warnings for " +
             member.user.tag +
             "**\n\n";
 
-        warnings.forEach((warning, index) => {
-            output +=
+        warnings.forEach(function (warning, index) {
+            text +=
                 "**" +
                 (index + 1) +
                 ".** " +
@@ -830,13 +527,14 @@ client.on("messageCreate", async (message) => {
                 "\n";
         });
 
-        return message.reply(output);
-    }
+        await deleteCommand(message);
 
+        return message.channel.send(text);
+    }
 
     /* ========================= CLEAR WARNINGS ========================= */
 
-    if (cmd === "clearwarnings") {
+    if (cmd === "clearwarnings" || cmd === "unwarn") {
         if (
             !hasPermission(
                 message,
@@ -848,33 +546,351 @@ client.on("messageCreate", async (message) => {
             );
         }
 
-        const member =
-            message.mentions.members.first();
+        const members = getMembers(message);
 
-        if (!member) {
+        if (members.length === 0) {
             return message.reply(
-                "❌ Usage: `--clearwarnings @user`"
+                "❌ Usage: `--clearwarnings @user @user2`"
             );
         }
 
-        const key = getUserKey(
-            message.guild.id,
-            member.id
-        );
+        if (data.warnings[message.guild.id]) {
+            for (const member of members) {
+                delete data.warnings[message.guild.id][member.id];
+            }
 
-        delete data.warnings[key];
+            saveData();
+        }
 
-        saveData();
+        await deleteCommand(message);
 
-        return message.reply(
-            "🧹 Cleared warnings for **" +
-            member.user.tag +
-            "**."
+        return message.channel.send(
+            "✅ Cleared all warnings for " +
+            members.map(function (member) {
+                return member.toString();
+            }).join(", ") +
+            "."
         );
     }
 
+    /* ========================= BAN ========================= */
 
-    /* ========================= CLEAR ========================= */
+    if (cmd === "ban") {
+        if (
+            !hasPermission(
+                message,
+                PermissionsBitField.Flags.BanMembers
+            )
+        ) {
+            return message.reply(
+                "❌ You need **Ban Members**."
+            );
+        }
+
+        const members = getMembers(message);
+
+        if (members.length === 0) {
+            return message.reply(
+                "❌ Usage: `--ban @user @user2 reason`"
+            );
+        }
+
+        const reason =
+            args.filter(function (arg) {
+                return !arg.startsWith("<@");
+            }).join(" ") ||
+            "No reason provided";
+
+        const banned = [];
+        const failed = [];
+
+        for (const member of members) {
+            if (!member.bannable) {
+                failed.push(member.toString());
+                continue;
+            }
+
+            try {
+                await member.ban({
+                    reason: reason
+                });
+
+                banned.push(member.user.tag);
+            } catch (error) {
+                failed.push(member.toString());
+            }
+        }
+
+        await deleteCommand(message);
+
+        let response = "";
+
+        if (banned.length > 0) {
+            response +=
+                "🔨 Banned **" +
+                banned.join(", ") +
+                "**.\n";
+        }
+
+        if (failed.length > 0) {
+            response +=
+                "❌ Couldn't ban " +
+                failed.join(", ") +
+                ".";
+        }
+
+        return message.channel.send(response);
+    }
+
+    /* ========================= UNBAN ========================= */
+
+    if (cmd === "unban") {
+        if (
+            !hasPermission(
+                message,
+                PermissionsBitField.Flags.BanMembers
+            )
+        ) {
+            return message.reply(
+                "❌ You need **Ban Members**."
+            );
+        }
+
+        const userIds = args;
+
+        if (userIds.length === 0) {
+            return message.reply(
+                "❌ Usage: `--unban USER_ID USER_ID`"
+            );
+        }
+
+        const unbanned = [];
+        const failed = [];
+
+        for (const userId of userIds) {
+            try {
+                await message.guild.members.unban(userId);
+                unbanned.push(userId);
+            } catch (error) {
+                failed.push(userId);
+            }
+        }
+
+        await deleteCommand(message);
+
+        let response = "";
+
+        if (unbanned.length > 0) {
+            response +=
+                "✅ Unbanned `" +
+                unbanned.join("`, `") +
+                "`.\n";
+        }
+
+        if (failed.length > 0) {
+            response +=
+                "❌ Couldn't unban `" +
+                failed.join("`, `") +
+                "`.";
+        }
+
+        return message.channel.send(response);
+    }
+
+    /* ========================= KICK ========================= */
+
+    if (cmd === "kick") {
+        if (
+            !hasPermission(
+                message,
+                PermissionsBitField.Flags.KickMembers
+            )
+        ) {
+            return message.reply(
+                "❌ You need **Kick Members**."
+            );
+        }
+
+        const members = getMembers(message);
+
+        if (members.length === 0) {
+            return message.reply(
+                "❌ Usage: `--kick @user @user2 reason`"
+            );
+        }
+
+        const reason =
+            args.filter(function (arg) {
+                return !arg.startsWith("<@");
+            }).join(" ") ||
+            "No reason provided";
+
+        const kicked = [];
+        const failed = [];
+
+        for (const member of members) {
+            if (!member.kickable) {
+                failed.push(member.toString());
+                continue;
+            }
+
+            try {
+                await member.kick(reason);
+                kicked.push(member.user.tag);
+            } catch (error) {
+                failed.push(member.toString());
+            }
+        }
+
+        await deleteCommand(message);
+
+        let response = "";
+
+        if (kicked.length > 0) {
+            response +=
+                "👢 Kicked **" +
+                kicked.join(", ") +
+                "**.\n";
+        }
+
+        if (failed.length > 0) {
+            response +=
+                "❌ Couldn't kick " +
+                failed.join(", ") +
+                ".";
+        }
+
+        return message.channel.send(response);
+    }
+
+    /* ========================= MUTE / TIMEOUT ========================= */
+
+    if (cmd === "mute" || cmd === "timeout") {
+        if (
+            !hasPermission(
+                message,
+                PermissionsBitField.Flags.ModerateMembers
+            )
+        ) {
+            return message.reply(
+                "❌ You need **Moderate Members**."
+            );
+        }
+
+        const members = getMembers(message);
+
+        if (members.length === 0) {
+            return message.reply(
+                "❌ Usage: `--mute @user @user2 10m`"
+            );
+        }
+
+        let duration = 10 * 60 * 1000;
+
+        const durationArg = args.find(function (arg) {
+            return parseDuration(arg) !== null;
+        });
+
+        if (durationArg) {
+            duration = parseDuration(durationArg);
+        }
+
+        const maximum =
+            28 * 24 * 60 * 60 * 1000;
+
+        if (duration > maximum) {
+            return message.reply(
+                "❌ Maximum timeout is 28 days."
+            );
+        }
+
+        const timedOut = [];
+        const failed = [];
+
+        for (const member of members) {
+            try {
+                await member.timeout(
+                    duration,
+                    "Moderator timeout"
+                );
+
+                timedOut.push(member.toString());
+            } catch (error) {
+                failed.push(member.toString());
+            }
+        }
+
+        await deleteCommand(message);
+
+        let response =
+            "🔇 " +
+            timedOut.join(", ") +
+            " timed out for **" +
+            durationText(duration) +
+            "**.";
+
+        if (failed.length > 0) {
+            response +=
+                "\n❌ Couldn't timeout " +
+                failed.join(", ") +
+                ".";
+        }
+
+        return message.channel.send(response);
+    }
+
+    /* ========================= UNMUTE ========================= */
+
+    if (cmd === "unmute") {
+        if (
+            !hasPermission(
+                message,
+                PermissionsBitField.Flags.ModerateMembers
+            )
+        ) {
+            return message.reply(
+                "❌ You need **Moderate Members**."
+            );
+        }
+
+        const members = getMembers(message);
+
+        if (members.length === 0) {
+            return message.reply(
+                "❌ Usage: `--unmute @user @user2`"
+            );
+        }
+
+        const unmuted = [];
+        const failed = [];
+
+        for (const member of members) {
+            try {
+                await member.timeout(null);
+                unmuted.push(member.toString());
+            } catch (error) {
+                failed.push(member.toString());
+            }
+        }
+
+        await deleteCommand(message);
+
+        let response =
+            "🔊 " +
+            unmuted.join(", ") +
+            " have been unmuted.";
+
+        if (failed.length > 0) {
+            response +=
+                "\n❌ Couldn't unmute " +
+                failed.join(", ") +
+                ".";
+        }
+
+        return message.channel.send(response);
+    }
+
+    /* ========================= CLEAR / PURGE ========================= */
 
     if (cmd === "clear" || cmd === "purge") {
         if (
@@ -888,44 +904,32 @@ client.on("messageCreate", async (message) => {
             );
         }
 
-        const amount = parseInt(args[0]);
+        const amount = Number(args[0]);
 
         if (
-            isNaN(amount) ||
+            !Number.isInteger(amount) ||
             amount < 1 ||
             amount > 100
         ) {
             return message.reply(
-                "❌ Usage: `--clear 10`"
+                "❌ Use a number between 1 and 100."
             );
         }
 
-        try {
-            const deleted =
-                await message.channel.bulkDelete(
-                    amount + 1,
-                    true
-                );
-
-            const msg =
-                await message.channel.send(
-                    "🧹 Deleted **" +
-                    (deleted.size - 1) +
-                    "** messages."
-                );
-
-            setTimeout(() => {
-                msg.delete().catch(() => {});
-            }, 3000);
-        } catch (error) {
-            return message.reply(
-                "❌ Couldn't delete those messages."
+        const deleted =
+            await message.channel.bulkDelete(
+                amount,
+                true
             );
-        }
 
-        return;
+        await deleteCommand(message);
+
+        return message.channel.send(
+            "🧹 Deleted **" +
+            deleted.size +
+            "** messages."
+        );
     }
-
 
     /* ========================= LOCK ========================= */
 
@@ -941,24 +945,19 @@ client.on("messageCreate", async (message) => {
             );
         }
 
-        try {
-            await message.channel.permissionOverwrites.edit(
-                message.guild.roles.everyone,
-                {
-                    SendMessages: false
-                }
-            );
+        await message.channel.permissionOverwrites.edit(
+            message.guild.roles.everyone,
+            {
+                SendMessages: false
+            }
+        );
 
-            return message.channel.send(
-                "🔒 Channel locked."
-            );
-        } catch (error) {
-            return message.reply(
-                "❌ Couldn't lock this channel."
-            );
-        }
+        await deleteCommand(message);
+
+        return message.channel.send(
+            "🔒 Channel locked."
+        );
     }
-
 
     /* ========================= UNLOCK ========================= */
 
@@ -974,24 +973,19 @@ client.on("messageCreate", async (message) => {
             );
         }
 
-        try {
-            await message.channel.permissionOverwrites.edit(
-                message.guild.roles.everyone,
-                {
-                    SendMessages: null
-                }
-            );
+        await message.channel.permissionOverwrites.edit(
+            message.guild.roles.everyone,
+            {
+                SendMessages: null
+            }
+        );
 
-            return message.channel.send(
-                "🔓 Channel unlocked."
-            );
-        } catch (error) {
-            return message.reply(
-                "❌ Couldn't unlock this channel."
-            );
-        }
+        await deleteCommand(message);
+
+        return message.channel.send(
+            "🔓 Channel unlocked."
+        );
     }
-
 
     /* ========================= SLOWMODE ========================= */
 
@@ -1007,35 +1001,30 @@ client.on("messageCreate", async (message) => {
             );
         }
 
-        const seconds = parseInt(args[0]);
+        const seconds = Number(args[0]);
 
         if (
-            isNaN(seconds) ||
+            !Number.isInteger(seconds) ||
             seconds < 0 ||
             seconds > 21600
         ) {
             return message.reply(
-                "❌ Use a number between `0` and `21600`."
+                "❌ Use a number between 0 and 21600."
             );
         }
 
-        try {
-            await message.channel.setRateLimitPerUser(
-                seconds
-            );
+        await message.channel.setRateLimitPerUser(
+            seconds
+        );
 
-            return message.channel.send(
-                "🐌 Slowmode set to **" +
-                seconds +
-                " seconds**."
-            );
-        } catch (error) {
-            return message.reply(
-                "❌ Couldn't set slowmode."
-            );
-        }
+        await deleteCommand(message);
+
+        return message.channel.send(
+            "🐌 Slowmode set to **" +
+            seconds +
+            " seconds**."
+        );
     }
-
 
     /* ========================= NICK ========================= */
 
@@ -1051,84 +1040,219 @@ client.on("messageCreate", async (message) => {
             );
         }
 
-        const member =
-            message.mentions.members.first();
+        const members = getMembers(message);
 
-        if (!member) {
+        if (members.length === 0) {
             return message.reply(
-                "❌ Usage: `--nick @user nickname`"
+                "❌ Usage: `--nick @user @user2 NewName`"
             );
         }
 
-        const nickname = args
-            .filter(arg => !arg.startsWith("<@"))
-            .join(" ");
+        const nickname =
+            args.filter(function (arg) {
+                return !arg.startsWith("<@");
+            }).join(" ");
 
         if (!nickname) {
             return message.reply(
-                "❌ Give a nickname."
+                "❌ Enter a nickname."
             );
         }
 
-        try {
-            await member.setNickname(nickname);
+        const changed = [];
+        const failed = [];
 
-            return message.reply(
-                "✏️ Nickname changed for **" +
-                member.user.tag +
-                "**."
-            );
-        } catch (error) {
-            return message.reply(
-                "❌ Couldn't change nickname."
-            );
+        for (const member of members) {
+            try {
+                await member.setNickname(nickname);
+                changed.push(member.toString());
+            } catch (error) {
+                failed.push(member.toString());
+            }
         }
+
+        await deleteCommand(message);
+
+        let response =
+            "✅ Changed nickname for " +
+            changed.join(", ") +
+            " to **" +
+            nickname +
+            "**.";
+
+        if (failed.length > 0) {
+            response +=
+                "\n❌ Couldn't change " +
+                failed.join(", ") +
+                ".";
+        }
+
+        return message.channel.send(response);
     }
 
+    /* ========================= ROLE ========================= */
+
+    if (cmd === "role") {
+        if (
+            !hasPermission(
+                message,
+                PermissionsBitField.Flags.ManageRoles
+            )
+        ) {
+            return message.reply(
+                "❌ You need **Manage Roles**."
+            );
+        }
+
+        const members = getMembers(message);
+
+        if (members.length === 0) {
+            return message.reply(
+                "❌ Usage: `--role @user @user2 customer`"
+            );
+        }
+
+        const roleName =
+            args.filter(function (arg) {
+                return !arg.startsWith("<@");
+            }).join(" ");
+
+        if (!roleName) {
+            return message.reply(
+                "❌ Usage: `--role @user @user2 customer`"
+            );
+        }
+
+        const role =
+            message.guild.roles.cache.find(
+                function (r) {
+                    return (
+                        r.name.toLowerCase() ===
+                        roleName.toLowerCase()
+                    );
+                }
+            );
+
+        if (!role) {
+            return message.reply(
+                "❌ Role **" +
+                roleName +
+                "** doesn't exist."
+            );
+        }
+
+        if (role.managed) {
+            return message.reply(
+                "❌ That role is managed by Discord."
+            );
+        }
+
+        const botMember =
+            message.guild.members.me;
+
+        if (!botMember) {
+            return message.reply(
+                "❌ I can't find my bot member."
+            );
+        }
+
+        if (
+            role.position >=
+            botMember.roles.highest.position
+        ) {
+            return message.reply(
+                "❌ That role is above my highest role."
+            );
+        }
+
+        const added = [];
+        const failed = [];
+
+        for (const member of members) {
+            if (
+                member.roles.highest.position >=
+                botMember.roles.highest.position
+            ) {
+                failed.push(member.toString());
+                continue;
+            }
+
+            try {
+                await member.roles.add(role);
+                added.push(member.toString());
+            } catch (error) {
+                failed.push(member.toString());
+            }
+        }
+
+        await deleteCommand(message);
+
+        let response =
+            "✅ Gave " +
+            added.join(", ") +
+            " the **" +
+            role.name +
+            "** role.";
+
+        if (failed.length > 0) {
+            response +=
+                "\n❌ Couldn't give the role to " +
+                failed.join(", ") +
+                ".";
+        }
+
+        return message.channel.send(response);
+    }
 
     /* ========================= USERINFO ========================= */
 
     if (cmd === "userinfo") {
         const member =
-            message.mentions.members.first() ||
+            getMember(message, args[0]) ||
             message.member;
 
-        return message.reply(
+        await deleteCommand(message);
+
+        return message.channel.send(
             "👤 **USER INFO**\n\n" +
-            "**User:** " +
+            "Username: **" +
             member.user.tag +
-            "\n" +
-            "**ID:** " +
+            "**\n" +
+            "ID: `" +
             member.id +
-            "\n" +
-            "**Joined:** " +
-            member.joinedAt.toISOString()
+            "`\n" +
+            "Joined: <t:" +
+            Math.floor(
+                member.joinedTimestamp / 1000
+            ) +
+            ":R>"
         );
     }
-
 
     /* ========================= SERVERINFO ========================= */
 
     if (cmd === "serverinfo") {
-        return message.reply(
+        await deleteCommand(message);
+
+        return message.channel.send(
             "🏠 **SERVER INFO**\n\n" +
-            "**Name:** " +
+            "Name: **" +
             message.guild.name +
-            "\n" +
-            "**Members:** " +
+            "**\n" +
+            "ID: `" +
+            message.guild.id +
+            "`\n" +
+            "Members: **" +
             message.guild.memberCount +
-            "\n" +
-            "**Channels:** " +
+            "**\n" +
+            "Channels: **" +
             message.guild.channels.cache.size +
-            "\n" +
-            "**Roles:** " +
+            "**\n" +
+            "Roles: **" +
             message.guild.roles.cache.size +
-            "\n" +
-            "**Owner:** " +
-            message.guild.ownerId
+            "**"
         );
     }
-
 
     /* ========================= SAY ========================= */
 
@@ -1150,111 +1274,23 @@ client.on("messageCreate", async (message) => {
 
         if (!text) {
             return message.reply(
-                "❌ Usage: `--say your message`"
+                "❌ Usage: `--say message`"
             );
         }
 
-        await deleteCommand(message);
+        await message.delete().catch(function () {});
 
-        return message.channel.send(text);
+        return message.channel.send({
+            content: text,
+            allowedMentions: {
+                parse: [
+                    "users",
+                    "roles",
+                    "everyone"
+                ]
+            }
+        });
     }
-
-
-    /* ========================= ROLE ========================= */
-
-    if (cmd === "role") {
-        if (
-            !hasPermission(
-                message,
-                PermissionsBitField.Flags.ManageRoles
-            )
-        ) {
-            return message.reply(
-                "❌ You need **Manage Roles**."
-            );
-        }
-
-        const member =
-            message.mentions.members.first();
-
-        const roleName = args
-            .filter(arg => !arg.startsWith("<@"))
-            .join(" ")
-            .trim();
-
-        if (!member || !roleName) {
-            return message.reply(
-                "❌ Usage: `--role @user customer`"
-            );
-        }
-
-        const role =
-            message.guild.roles.cache.find(
-                r =>
-                    r.name.toLowerCase() ===
-                    roleName.toLowerCase()
-            );
-
-        if (!role) {
-            return message.reply(
-                "❌ Role not found."
-            );
-        }
-
-        try {
-            await member.roles.add(role);
-
-            return message.reply(
-                "✅ Added **" +
-                role.name +
-                "** to **" +
-                member.user.tag +
-                "**."
-            );
-        } catch (error) {
-            return message.reply(
-                "❌ Couldn't add that role."
-            );
-        }
-    }
-
-
-    /* ========================= WELCOME SETUP ========================= */
-
-    if (cmd === "setwelcome") {
-        if (
-            !hasPermission(
-                message,
-                PermissionsBitField.Flags.Administrator
-            )
-        ) {
-            return message.reply(
-                "❌ You need **Administrator**."
-            );
-        }
-
-        const channel =
-            message.mentions.channels.first();
-
-        if (!channel) {
-            return message.reply(
-                "❌ Usage: `--setwelcome #channel`"
-            );
-        }
-
-        data.welcomeChannels[
-            message.guild.id
-        ] = channel.id;
-
-        saveData();
-
-        return message.reply(
-            "👋 Welcome channel set to " +
-            channel +
-            "."
-        );
-    }
-
 
     /* ========================= TICKET SETUP ========================= */
 
@@ -1262,35 +1298,54 @@ client.on("messageCreate", async (message) => {
         if (
             !hasPermission(
                 message,
-                PermissionsBitField.Flags.Administrator
+                PermissionsBitField.Flags.ManageGuild
             )
         ) {
             return message.reply(
-                "❌ You need **Administrator**."
+                "❌ You need **Manage Server**."
             );
         }
 
         const category =
             message.mentions.channels.first();
 
-        if (!category) {
+        if (
+            !category ||
+            category.type !== ChannelType.GuildCategory
+        ) {
             return message.reply(
-                "❌ Usage: `--ticketsetup #category`"
+                "❌ Usage: `--ticketsetup #category`\n" +
+                "You must mention a category."
             );
         }
 
-        data.ticketCategories[
-            message.guild.id
-        ] = category.id;
+        data.ticketCategories[message.guild.id] =
+            category.id;
 
         saveData();
 
-        return message.reply(
-            "🎫 Ticket category set to " +
-            category + "."
-        );
-    }
+        const row =
+            new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId("create_ticket")
+                    .setLabel("Create Ticket")
+                    .setEmoji("🎫")
+                    .setStyle(
+                        ButtonStyle.Primary
+                    )
+            );
 
+        await message.channel.send({
+            content:
+                "🎫 **PRLNGZZ DOG SUPPORT**\n\n" +
+                "Need help? Click the button below to create a private ticket.",
+            components: [row]
+        });
+
+        await deleteCommand(message);
+
+        return;
+    }
 
     /* ========================= GIVEAWAY ========================= */
 
@@ -1298,11 +1353,11 @@ client.on("messageCreate", async (message) => {
         if (
             !hasPermission(
                 message,
-                PermissionsBitField.Flags.ManageMessages
+                PermissionsBitField.Flags.ManageGuild
             )
         ) {
             return message.reply(
-                "❌ You need **Manage Messages**."
+                "❌ You need **Manage Server**."
             );
         }
 
@@ -1310,7 +1365,7 @@ client.on("messageCreate", async (message) => {
             parseDuration(args[0]);
 
         const winners =
-            parseInt(args[1]);
+            Number(args[1]);
 
         const prize =
             args.slice(2).join(" ");
@@ -1321,109 +1376,417 @@ client.on("messageCreate", async (message) => {
             !prize
         ) {
             return message.reply(
-                "❌ Usage: `--giveaway 10m 1 500 Robux`"
+                "❌ Usage: `--giveaway 10m 1 Prize`"
             );
         }
 
-        const end =
-            Date.now() + duration;
+        await deleteCommand(message);
 
-        const giveawayMessage =
-            await message.channel.send(
-                "🎉 **GIVEAWAY** 🎉\n\n" +
-                "**Prize:** " +
-                prize +
-                "\n" +
-                "**Winners:** " +
-                winners +
-                "\n" +
-                "**Ends:** <t:" +
-                Math.floor(end / 1000) +
-                ":R>\n\n" +
-                "React with 🎉 to enter!"
+        const id =
+            message.guild.id +
+            "-" +
+            Date.now();
+
+        giveaways.set(id, {
+            channelId:
+                message.channel.id,
+
+            entrants:
+                new Set(),
+
+            winners:
+                winners,
+
+            prize:
+                prize
+        });
+
+        const row =
+            new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId(
+                        "giveaway_" + id
+                    )
+                    .setLabel(
+                        "Enter Giveaway"
+                    )
+                    .setEmoji("🎉")
+                    .setStyle(
+                        ButtonStyle.Success
+                    )
             );
 
-        await giveawayMessage.react("🎉");
+        const giveawayMessage =
+            await message.channel.send({
+                content:
+                    "🎉 **GIVEAWAY**\n\n" +
+                    "Prize: **" +
+                    prize +
+                    "**\n" +
+                    "Winners: **" +
+                    winners +
+                    "**\n" +
+                    "Ends: <t:" +
+                    Math.floor(
+                        (Date.now() +
+                            duration) /
+                        1000
+                    ) +
+                    ":R>\n" +
+                    "Entries: **0**\n\n" +
+                    "Click the button below to enter!",
+                components: [row]
+            });
 
-        setTimeout(async () => {
-            try {
-                const fetched =
-                    await message.channel.messages.fetch(
-                        giveawayMessage.id
+        setTimeout(
+            async function () {
+                const giveaway =
+                    giveaways.get(id);
+
+                if (!giveaway) return;
+
+                giveaways.delete(id);
+
+                const entrants =
+                    Array.from(
+                        giveaway.entrants
                     );
 
-                const reaction =
-                    fetched.reactions.cache.get("🎉");
+                if (entrants.length === 0) {
+                    await giveawayMessage
+                        .edit({
+                            content:
+                                "🎉 **GIVEAWAY ENDED**\n\n" +
+                                "Prize: **" +
+                                prize +
+                                "**\n\n" +
+                                "❌ Nobody entered.",
+                            components: []
+                        })
+                        .catch(
+                            function () {}
+                        );
 
-                if (!reaction) {
-                    return message.channel.send(
-                        "🎉 Giveaway ended but nobody entered."
-                    );
+                    return;
                 }
-
-                const users =
-                    await reaction.users.fetch();
-
-                const entries =
-                    users.filter(
-                        user =>
-                            !user.bot
-                    );
-
-                if (!entries.size) {
-                    return message.channel.send(
-                        "🎉 Giveaway ended but nobody entered."
-                    );
-                }
-
-                const array =
-                    Array.from(entries.values());
 
                 const selected = [];
 
                 while (
-                    selected.length < winners &&
-                    array.length
+                    selected.length <
+                    Math.min(
+                        winners,
+                        entrants.length
+                    )
                 ) {
-                    const index =
-                        Math.floor(
-                            Math.random() *
-                            array.length
-                        );
+                    const random =
+                        entrants[
+                            Math.floor(
+                                Math.random() *
+                                entrants.length
+                            )
+                        ];
 
-                    selected.push(
-                        array.splice(index, 1)[0]
-                    );
+                    if (
+                        !selected.includes(
+                            random
+                        )
+                    ) {
+                        selected.push(
+                            random
+                        );
+                    }
                 }
 
-                return message.channel.send(
-                    "🎉 **GIVEAWAY ENDED!**\n\n" +
-                    "**Prize:** " +
-                    prize +
-                    "\n" +
-                    "**Winner(s):** " +
+                const winnerText =
                     selected
-                        .map(user => user.toString())
-                        .join(", ")
+                        .map(function (id) {
+                            return (
+                                "<@" +
+                                id +
+                                ">"
+                            );
+                        })
+                        .join(", ");
+
+                await giveawayMessage
+                    .edit({
+                        content:
+                            "🎉 **GIVEAWAY ENDED**\n\n" +
+                            "Prize: **" +
+                            prize +
+                            "**\n\n" +
+                            "🏆 Winner(s): " +
+                            winnerText,
+                        components: []
+                    })
+                    .catch(
+                        function () {}
+                    );
+
+                message.channel.send(
+                    "🎉 Congratulations " +
+                    winnerText +
+                    "! You won **" +
+                    prize +
+                    "**!"
+                ).catch(
+                    function () {}
                 );
-            } catch (error) {
-                console.log(
-                    "Giveaway error:",
-                    error
-                );
-            }
-        }, duration);
+            },
+            duration
+        );
 
         return;
     }
-
-
-    /* ========================= UNKNOWN COMMAND ========================= */
-
-    return;
 });
 
+/* ========================= BUTTONS ========================= */
+
+client.on(
+    "interactionCreate",
+    async function (interaction) {
+        if (!interaction.isButton()) return;
+
+        /* ========================= CREATE TICKET ========================= */
+
+        if (
+            interaction.customId ===
+            "create_ticket"
+        ) {
+            const guild =
+                interaction.guild;
+
+            const categoryId =
+                data.ticketCategories[
+                    guild.id
+                ];
+
+            if (!categoryId) {
+                return interaction.reply({
+                    content:
+                        "❌ Ticket system isn't configured.",
+                    ephemeral: true
+                });
+            }
+
+            const safeName =
+                interaction.user.username
+                    .toLowerCase()
+                    .replace(
+                        /[^a-z0-9]/g,
+                        ""
+                    )
+                    .slice(0, 20);
+
+            const existing =
+                guild.channels.cache.find(
+                    function (channel) {
+                        return (
+                            channel.name ===
+                            "ticket-" +
+                            safeName
+                        );
+                    }
+                );
+
+            if (existing) {
+                return interaction.reply({
+                    content:
+                        "❌ You already have a ticket: " +
+                        existing.toString(),
+                    ephemeral: true
+                });
+            }
+
+            const ticket =
+                await guild.channels.create({
+                    name:
+                        "ticket-" +
+                        safeName,
+
+                    type:
+                        ChannelType.GuildText,
+
+                    parent:
+                        categoryId,
+
+                    permissionOverwrites: [
+                        {
+                            id:
+                                guild.roles
+                                    .everyone
+                                    .id,
+
+                            deny: [
+                                PermissionsBitField
+                                    .Flags
+                                    .ViewChannel
+                            ]
+                        },
+
+                        {
+                            id:
+                                interaction.user
+                                    .id,
+
+                            allow: [
+                                PermissionsBitField
+                                    .Flags
+                                    .ViewChannel,
+
+                                PermissionsBitField
+                                    .Flags
+                                    .SendMessages,
+
+                                PermissionsBitField
+                                    .Flags
+                                    .ReadMessageHistory
+                            ]
+                        }
+                    ]
+                });
+
+            const row =
+                new ActionRowBuilder()
+                    .addComponents(
+                        new ButtonBuilder()
+                            .setCustomId(
+                                "close_ticket"
+                            )
+                            .setLabel(
+                                "Close Ticket"
+                            )
+                            .setEmoji("🔒")
+                            .setStyle(
+                                ButtonStyle.Danger
+                            )
+                    );
+
+            await ticket.send({
+                content:
+                    "🎫 **PRLNGZZ DOG TICKET**\n\n" +
+                    "Welcome " +
+                    interaction.user.toString() +
+                    "!\n\n" +
+                    "Explain your issue here.\n" +
+                    "Click **Close Ticket** when finished.",
+
+                components: [row]
+            });
+
+            return interaction.reply({
+                content:
+                    "✅ Ticket created: " +
+                    ticket.toString(),
+
+                ephemeral: true
+            });
+        }
+
+        /* ========================= CLOSE TICKET ========================= */
+
+        if (
+            interaction.customId ===
+            "close_ticket"
+        ) {
+            await interaction.reply(
+                "🔒 Closing ticket in 5 seconds..."
+            );
+
+            setTimeout(
+                function () {
+                    interaction.channel
+                        .delete()
+                        .catch(
+                            function () {}
+                        );
+                },
+                5000
+            );
+
+            return;
+        }
+
+        /* ========================= GIVEAWAY BUTTON ========================= */
+
+        if (
+            interaction.customId.startsWith(
+                "giveaway_"
+            )
+        ) {
+            const id =
+                interaction.customId.substring(
+                    9
+                );
+
+            const giveaway =
+                giveaways.get(id);
+
+            if (!giveaway) {
+                return interaction.reply({
+                    content:
+                        "❌ This giveaway has ended.",
+                    ephemeral: true
+                });
+            }
+
+            if (
+                giveaway.entrants.has(
+                    interaction.user.id
+                )
+            ) {
+                return interaction.reply({
+                    content:
+                        "❌ You're already entered.",
+                    ephemeral: true
+                });
+            }
+
+            giveaway.entrants.add(
+                interaction.user.id
+            );
+
+            const giveawayMessage =
+                await interaction.channel.messages.fetch(
+                    interaction.message.id
+                ).catch(function () {
+                    return null;
+                });
+
+            if (giveawayMessage) {
+                const currentText =
+                    giveawayMessage.content.replace(
+                        /Entries: \*\*\d+\*\*/,
+                        "Entries: **" +
+                        giveaway.entrants.size +
+                        "**"
+                    );
+
+                await giveawayMessage.edit({
+                    content: currentText
+                }).catch(function () {});
+            }
+
+            return interaction.reply({
+                content:
+                    "✅ You're entered! Good luck 🍀",
+                ephemeral: true
+            });
+        }
+    }
+);
 
 /* ========================= LOGIN ========================= */
 
-client.login(process.env.DISCORD_TOKEN);
+if (!process.env.DISCORD_TOKEN) {
+    console.error(
+        "❌ DISCORD_TOKEN is missing."
+    );
+
+    process.exit(1);
+}
+
+client.login(
+    process.env.DISCORD_TOKEN
+);
