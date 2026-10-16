@@ -120,7 +120,6 @@ async function updateStatsChannels(guild) {
   const msg = await channel.messages.fetch(statsConfig.messageId).catch(() => null);
   if (!msg) return;
 
-  // Defaults to 39 if not set yet in data
   const completed = (data.completedOrders && data.completedOrders[guildId] !== undefined)
     ? data.completedOrders[guildId]
     : 39;
@@ -136,7 +135,6 @@ async function updateStatsChannels(guild) {
     }
   }
 
-  // If there are no open tickets created yet, fallback to 30 from screenshot
   if (activeTicketsCount === 0) {
     activeTicketsCount = 30;
   }
@@ -146,7 +144,6 @@ async function updateStatsChannels(guild) {
   if (creatorRole) {
     creatorsCount = creatorRole.members.size;
   }
-  // Fallback to 4 if creator role isn't created/assigned yet
   if (creatorsCount === 0) {
     creatorsCount = 4;
   }
@@ -257,12 +254,11 @@ client.on("messageCreate", async function (message) {
 
   const content = message.content.trim();
 
-  // "67" standalone trigger check
-  const lowerContent = content.toLowerCase();
+  // Expanded 67/76 trigger detection (matches in sentences, spaced numbers, phrases, repetitions)
+  const normalized = content.toLowerCase().replace(/[^a-z0-9]/g, "");
   const is67Trigger =
-    lowerContent === "67" ||
-    lowerContent === "six seven" ||
-    lowerContent === "six-seven";
+    /67|76/.test(normalized) ||
+    /six\s*seven|seven\s*six/.test(content.toLowerCase());
 
   if (is67Trigger && !message.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) {
     if (!data.warnings[guildId]) {
@@ -272,14 +268,14 @@ client.on("messageCreate", async function (message) {
       data.warnings[guildId][message.author.id] = [];
     }
     data.warnings[guildId][message.author.id].push({
-      reason: "CODE RED! 🚨 {user.mention} just uttered the forbidden numbers: 67. My circuits are literally boiling. WARN ADDED TO YOUR RECORD. Knock it off right now before I lose my temper permanently! 🤬",
+      reason: "67 makes me angy",
       moderator: client.user.id,
       timestamp: Date.now()
     });
     saveData();
     await deleteCommand(message);
     return message.channel.send(
-      "⚠️ " + message.author.toString() + " was warned. **CODE RED! 🚨 {user.mention} just uttered the forbidden numbers: 67. My circuits are literally boiling. WARN ADDED TO YOUR RECORD. Knock it off right now before I lose my temper permanently! 🤬"
+      "⚠️ " + message.author.toString() + " was warned. **Reason:** 67 makes me angy"
     );
   }
 
@@ -939,7 +935,6 @@ client.on("interactionCreate", async function (interaction) {
       return interaction.reply({ content: "❌ Ticket system isn't configured.", ephemeral: true });
     }
 
-    // Check Max Open Tickets Limit
     const category = guild.channels.cache.get(categoryId);
     if (category) {
       const activeCount = guild.channels.cache.filter(
