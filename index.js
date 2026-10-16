@@ -26,10 +26,10 @@ let data = {
   welcomeChannels: {},
   leaveChannels: {},
   ticketCategories: {},
-  ticketCount: 30, // Next ticket created will be #31
+  ticketCount: 30,
   maxOpenTickets: 5,
   statsChannels: {},
-  completedOrders: {}, // Will default to 39 if unset
+  completedOrders: {},
   afkUsers: {},
   raidMode: {}
 };
@@ -254,11 +254,15 @@ client.on("messageCreate", async function (message) {
 
   const content = message.content.trim();
 
-  // Expanded 67/76 trigger detection (matches in sentences, spaced numbers, phrases, repetitions)
-  const normalized = content.toLowerCase().replace(/[^a-z0-9]/g, "");
+  // Strip user/channel/role mentions so IDs don't trigger false 67/76 warnings
+  const cleanContent = content
+    .replace(/<@&?[0-9]+>/g, "")
+    .replace(/<#[0-9]+>/g, "");
+
+  const normalized = cleanContent.toLowerCase().replace(/[^a-z0-9]/g, "");
   const is67Trigger =
     /67|76/.test(normalized) ||
-    /six\s*seven|seven\s*six/.test(content.toLowerCase());
+    /six\s*seven|seven\s*six/.test(cleanContent.toLowerCase());
 
   if (is67Trigger && !message.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) {
     if (!data.warnings[guildId]) {
