@@ -25,7 +25,13 @@ let data = {
 warnings: {},
 welcomeChannels: {},
 ticketCategories: {},
-raidMode: {}
+raidMode: {},
+leaveChannels: {},
+ticketCounters: {},
+ticketLimits: {},
+finishedOrders: {},
+counterChannels: {},
+afks: {}
 };
 
 if (fs.existsSync(DATA_FILE)) {
@@ -33,6 +39,50 @@ try {
 data = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
 } catch (error) {
 console.log("Could not load data file.");
+}
+}
+
+data.leaveChannels = data.leaveChannels || {};
+data.ticketCounters = data.ticketCounters || {};
+data.ticketLimits = data.ticketLimits || {};
+data.finishedOrders = data.finishedOrders || {};
+data.counterChannels = data.counterChannels || {};
+data.afks = data.afks || {};
+
+function countOpenTickets(guild) {
+return guild.channels.cache.filter(function (channel) {
+return channel.type === ChannelType.GuildText && channel.topic && channel.topic.startsWith("PRLNGZZ_TICKET:");
+}).size;
+}
+
+async function updateOrderCounters(guild) {
+const config = data.counterChannels[guild.id] || {};
+const creatorRole = guild.roles.cache.find(function (role) {
+return role.name.toLowerCase() === "creator";
+});
+
+const values = {
+active: countOpenTickets(guild),
+finished: Number(data.finishedOrders[guild.id] || 0),
+creators: creatorRole ? creatorRole.members.size : 0
+};
+
+const labels = {
+active: "active-orders",
+finished: "finished-orders",
+creators: "our-creators"
+};
+
+for (const type of Object.keys(labels)) {
+const channel = guild.channels.cache.get(config[type]);
+
+if (channel) {
+const name = labels[type] + "-" + values[type];
+
+if (channel.name !== name) {
+await channel.setName(name).catch(function () {});
+}
+}
 }
 }
 
@@ -77,6 +127,7 @@ return member.id;
 
 return args.filter(function (arg) {
 const match = arg.match(/^<@!?([0-9]+)>$/);
+
 return !match || !mentionIds.has(match[1]);
 });
 }
@@ -127,7 +178,12 @@ const giveaways = new Map();
 
 client.once("ready", function () {
 console.log("PRLNGZZ DOG online as " + client.user.tag);
+
 client.user.setActivity("--help");
+
+client.guilds.cache.forEach(function (guild) {
+updateOrderCounters(guild).catch(function () {});
+});
 });
 
 client.on("guildMemberAdd", async function (member) {
@@ -189,13 +245,99 @@ member.guild.name +
 ).catch(function () {});
 });
 
+client.on("guildMemberRemove", async function (member) {
+const channelId = data.leaveChannels[member.guild.id];
+
+if (!channelId) return;
+
+const channel = member.guild.channels.cache.get(channelId);
+
+if (!channel) return;
+
+channel.send(
+member.user.toString() +
+" this not so nice person left us 😢"
+).catch(function () {});
+});
+
+client.on("guildMemberUpdate", async function (oldMember, newMember) {
+updateOrderCounters(newMember.guild).catch(function () {});
+});
+
+client.on("channelDelete", function (channel) {
+if (channel.guild) {
+updateOrderCounters(channel.guild).catch(function () {});
+}
+});
+
 client.on("messageCreate", async function (message) {
 if (!message.guild) return;
 if (message.author.bot) return;
 
 const content = message.content.trim();
 
-if (
+if (!content.startsWith(PREFIX)) {
+const standalone67 = content
+.toLowerCase()
+.replace(/[.!?,;:]+$/g, "")
+.trim();
+
+if (/^(?:67|six[ -]?seven)$/i.test(standalone67)) {
+const guildId = message.guild.id;
+
+if (!data.warnings[guildId]) {
+data.warnings[guildId] = {};
+}
+
+if (!data.warnings[guildId][message.author.id]) {
+data.warnings[guildId][message.author.id] = [];
+}
+
+data.warnings[guildId][message.author.id].push({
+reason: "67 makes me angy",
+moderator: client.user.id,
+timestamp: Date.now()
+});
+
+saveData();
+
+await message.reply(
+"⚠️ You have been warned.\nReason: **67 makes me angy**"
+).catch(function () {});
+
+return;
+}
+
+const afkGuild = data.afks[message.guild.id] || {};
+
+if (afkGuild[message.author.id]) {
+delete afkGuild[message.author.id];
+saveData();
+}
+
+for (const mentionedUser of message.mentions.users.values()) {
+const afk = afkGuild[mentionedUser.id];
+
+if (!afk) continue;
+
+const remaining = afk.until - Date.now();
+
+if (remaining <= 0) {
+delete afkGuild[mentionedUser.id];
+saveData();
+continue;
+}
+
+await message.reply(
+mentionedUser.toString() +
+" is afk for " +
+durationText(remaining) +
+" more and won't get your ping until then." +
+(afk.reason ? " Reason: " + afk.reason : "")
+).catch(function () {});
+}
+}
+  if (
 !message.member.permissions.has(
 PermissionsBitField.Flags.ManageMessages
 ) &&
@@ -295,13 +437,19 @@ return message.channel.send(
 
 "👋 **WELCOME**\n" +
 "`--setwelcome #channel`\n" +
-"Sets the welcome channel.\n\n" +
+"Sets the welcome channel.\n" +
+"`--setleave #channel`\nSets a separate leave-message channel.\n\n" +
 
 "━━━━━━━━━━━━━━━━━━━━\n\n" +
 
 "🎫 **TICKETS**\n" +
 "`--ticketsetup #category`\n" +
-"Creates the ticket system.\n\n" +
+"Creates the ticket system.\n" +
+"`--ticketlimit 5` — maximum open tickets.\n" +
+"`--setcounter active #channel` — active orders.\n" +
+"`--setcounter finished #channel` — finished orders.\n" +
+"`--setcounter creators #channel` — our creators.\n" +
+"`--afk 5h school` or `--afk @user 5h school`.\n\n" +
 
 "━━━━━━━━━━━━━━━━━━━━\n\n" +
 
@@ -380,7 +528,13 @@ return message.channel.send(
 
 "**Server**\n" +
 "`--setwelcome #channel`\n" +
+"`--setleave #channel`\n" +
 "`--ticketsetup #category`\n" +
+"`--ticketlimit 5`\n" +
+"`--setcounter active #channel`\n" +
+"`--setcounter finished #channel`\n" +
+"`--setcounter creators #channel`\n" +
+"`--afk 5h school`\n" +
 "`--giveaway 10m 1 Prize`\n\n" +
 
 "**Info**\n" +
@@ -420,6 +574,128 @@ await deleteCommand(message);
 return message.channel.send(
 "✅ Welcome channel set to " +
 channel.toString()
+);
+}
+
+if (cmd === "setleave") {
+if (!hasPermission(message, PermissionsBitField.Flags.ManageGuild)) {
+return message.reply("❌ You need **Manage Server**.");
+}
+
+const channel = message.mentions.channels.first();
+
+if (!channel) {
+return message.reply("❌ Usage: `--setleave #channel`");
+}
+
+data.leaveChannels[message.guild.id] = channel.id;
+
+saveData();
+
+await deleteCommand(message);
+
+return message.channel.send(
+"✅ Leave channel set to " + channel.toString()
+);
+}
+
+if (cmd === "afk") {
+const target = message.mentions.members.first() || message.member;
+const otherArgs = getNonMentionArgs(message, args);
+
+const durationIndex = otherArgs.findIndex(function (arg) {
+return Boolean(parseDuration(arg));
+});
+
+if (durationIndex === -1) {
+return message.reply(
+"❌ Usage: `--afk @user 5h school` or `--afk 5h school`"
+);
+}
+
+const duration = parseDuration(otherArgs[durationIndex]);
+const reason = otherArgs.slice(durationIndex + 1).join(" ");
+
+if (!data.afks[message.guild.id]) {
+data.afks[message.guild.id] = {};
+}
+
+data.afks[message.guild.id][target.id] = {
+until: Date.now() + duration,
+reason: reason
+};
+
+saveData();
+
+await deleteCommand(message);
+
+return message.channel.send(
+"💤 " +
+target.toString() +
+" is now AFK for " +
+durationText(duration) +
+(reason ? ". Reason: " + reason : ".")
+);
+}
+
+if (cmd === "ticketlimit") {
+if (!hasPermission(message, PermissionsBitField.Flags.ManageGuild)) {
+return message.reply("❌ You need **Manage Server**.");
+}
+
+const limit = Number(args[0]);
+
+if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+return message.reply(
+"❌ Usage: `--ticketlimit 5` (choose 1–100)."
+);
+}
+
+data.ticketLimits[message.guild.id] = limit;
+
+saveData();
+
+await deleteCommand(message);
+
+return message.channel.send(
+"✅ Maximum open tickets set to **" + limit + "**."
+);
+}
+
+if (cmd === "setcounter") {
+if (!hasPermission(message, PermissionsBitField.Flags.ManageGuild)) {
+return message.reply("❌ You need **Manage Server**.");
+}
+
+const type = String(args[0] || "").toLowerCase();
+const channel = message.mentions.channels.first();
+
+if (!["active", "finished", "creators"].includes(type) || !channel) {
+return message.reply(
+"❌ Usage: `--setcounter active #channel`, `--setcounter finished #channel`, or `--setcounter creators #channel`."
+);
+}
+
+if (!data.counterChannels[message.guild.id]) {
+data.counterChannels[message.guild.id] = {};
+}
+
+data.counterChannels[message.guild.id][type] = channel.id;
+
+saveData();
+
+await updateOrderCounters(message.guild);
+
+await deleteCommand(message);
+
+const labels = {
+active: "Active orders",
+finished: "Finished orders",
+creators: "Our creators"
+};
+
+return message.channel.send(
+"✅ " + labels[type] + " counter set to " + channel.toString() + "."
 );
 }
 
@@ -510,7 +786,7 @@ text +=
 ".** " +
 warning.reason +
 "\n";
-});
+  });
 
 await deleteCommand(message);
 
@@ -945,8 +1221,7 @@ seconds +
 " seconds**."
 );
 }
-
-if (cmd === "nick") {
+  if (cmd === "nick") {
 if (!hasPermission(message, PermissionsBitField.Flags.ManageNicknames)) {
 return message.reply("❌ You need **Manage Nicknames**.");
 }
@@ -1240,8 +1515,301 @@ return message.channel.send(
 "✅ Ticket system configured."
 );
 }
+  if (cmd === "nick") {
+if (!hasPermission(message, PermissionsBitField.Flags.ManageNicknames)) {
+return message.reply("❌ You need **Manage Nicknames**.");
+}
 
-if (cmd === "giveaway") {
+const members = getMentionedMembers(message);
+
+if (members.length === 0) {
+return message.reply(
+"❌ Usage: `--nick @user @user2 NewName`"
+);
+}
+
+const nickname =
+getNonMentionArgs(message, args).join(" ");
+
+if (!nickname) {
+return message.reply("❌ Enter a nickname.");
+}
+
+const failed = [];
+
+for (const member of members) {
+try {
+await member.setNickname(nickname);
+} catch (error) {
+failed.push(member.toString());
+}
+}
+
+await deleteCommand(message);
+
+let result =
+"✅ Changed the nickname of " +
+members
+.filter(function (m) {
+return !failed.includes(m.toString());
+})
+.map(function (m) {
+return m.toString();
+})
+.join(", ") +
+" to **" +
+nickname +
+"**.";
+
+if (failed.length) {
+result +=
+"\n❌ Couldn't change " +
+failed.join(", ") +
+".";
+}
+
+return message.channel.send(result);
+}
+
+if (cmd === "role") {
+if (!hasPermission(message, PermissionsBitField.Flags.ManageRoles)) {
+return message.reply("❌ You need **Manage Roles**.");
+}
+
+const members = getMentionedMembers(message);
+
+if (members.length === 0) {
+return message.reply(
+"❌ Usage: `--role @user @user2 customer`"
+);
+}
+
+const roleName =
+getNonMentionArgs(message, args).join(" ");
+
+if (!roleName) {
+return message.reply(
+"❌ Usage: `--role @user @user2 customer`"
+);
+}
+
+const role =
+message.guild.roles.cache.find(function (r) {
+return r.name.toLowerCase() === roleName.toLowerCase();
+});
+
+if (!role) {
+return message.reply(
+"❌ Role **" +
+roleName +
+"** doesn't exist."
+);
+}
+
+if (role.managed) {
+return message.reply(
+"❌ That role is managed by Discord."
+);
+}
+
+const botMember = message.guild.members.me;
+
+if (!botMember) {
+return message.reply(
+"❌ I can't find my bot member."
+);
+}
+
+if (
+role.position >=
+botMember.roles.highest.position
+) {
+return message.reply(
+"❌ That role is above my highest role."
+);
+}
+
+const failed = [];
+
+for (const member of members) {
+if (
+member.roles.highest.position >=
+botMember.roles.highest.position
+) {
+failed.push(member.toString());
+continue;
+}
+
+try {
+await member.roles.add(role);
+} catch (error) {
+failed.push(member.toString());
+}
+}
+
+await deleteCommand(message);
+
+let result =
+"✅ Gave **" +
+role.name +
+"** to " +
+members
+.filter(function (m) {
+return !failed.includes(m.toString());
+})
+.map(function (m) {
+return "<@" + m.id + ">";
+})
+.join(", ") +
+".";
+
+if (failed.length) {
+result +=
+"\n❌ Couldn't give the role to " +
+failed.join(", ") +
+".";
+}
+
+return message.channel.send(result);
+}
+
+if (cmd === "userinfo") {
+const member =
+getMember(message, args[0]) ||
+message.member;
+
+await deleteCommand(message);
+
+return message.channel.send(
+"👤 **USER INFO**\n\n" +
+"Username: **" +
+member.user.tag +
+"**\n" +
+"ID: `" +
+member.id +
+"`\n" +
+"Joined: <t:" +
+Math.floor(
+member.joinedTimestamp / 1000
+) +
+":R>"
+);
+}
+
+if (cmd === "serverinfo") {
+await deleteCommand(message);
+
+return message.channel.send(
+"🏠 **SERVER INFO**\n\n" +
+"Name: **" +
+message.guild.name +
+"**\n" +
+"ID: `" +
+message.guild.id +
+"`\n" +
+"Members: **" +
+message.guild.memberCount +
+"**\n" +
+"Channels: **" +
+message.guild.channels.cache.size +
+"**\n" +
+"Roles: **" +
+message.guild.roles.cache.size +
+"**"
+);
+}
+
+if (cmd === "say") {
+if (
+!hasPermission(
+message,
+PermissionsBitField.Flags.ManageMessages
+)
+) {
+return message.reply(
+"❌ You need **Manage Messages**."
+);
+}
+
+const text = message.content
+.slice(PREFIX.length + 3)
+.trim();
+
+if (!text) {
+return message.reply(
+"❌ Usage: `--say message`"
+);
+}
+
+await message.delete().catch(function () {});
+
+return message.channel.send({
+content: text,
+allowedMentions: {
+parse: [
+"users",
+"roles",
+"everyone"
+]
+}
+});
+}
+
+if (cmd === "ticketsetup") {
+if (
+!hasPermission(
+message,
+PermissionsBitField.Flags.ManageGuild
+)
+) {
+return message.reply(
+"❌ You need **Manage Server**."
+);
+}
+
+const category =
+message.mentions.channels.first();
+
+if (
+!category ||
+category.type !== ChannelType.GuildCategory
+) {
+return message.reply(
+"❌ Usage: `--ticketsetup #category`\n" +
+"You must mention a category."
+);
+}
+
+data.ticketCategories[message.guild.id] =
+category.id;
+
+saveData();
+
+const row =
+new ActionRowBuilder().addComponents(
+new ButtonBuilder()
+.setCustomId("create_ticket")
+.setLabel("Create Ticket")
+.setEmoji("🎫")
+.setStyle(
+ButtonStyle.Primary
+)
+);
+
+await message.channel.send({
+content:
+"🎫 **PRLNGZZ DOG SUPPORT**\n\n" +
+"Need help? Click the button below to create a private ticket.",
+components: [row]
+});
+
+await deleteCommand(message);
+
+return message.channel.send(
+"✅ Ticket system configured."
+);
+}
+  if (cmd === "giveaway") {
 if (
 !hasPermission(
 message,
@@ -1464,16 +2032,9 @@ interaction.user.username
 )
 .slice(0, 20);
 
-const existing =
-guild.channels.cache.find(
-function (channel) {
-return (
-channel.name ===
-"ticket-" +
-safeName
-);
-}
-);
+const existing = guild.channels.cache.find(function (channel) {
+return channel.type === ChannelType.GuildText && channel.topic === "PRLNGZZ_TICKET:" + interaction.user.id;
+});
 
 if (existing) {
 return interaction.reply({
@@ -1484,11 +2045,29 @@ ephemeral: true
 });
 }
 
+const openTickets = countOpenTickets(guild);
+const ticketLimit = data.ticketLimits[guild.id] || 5;
+
+if (openTickets >= ticketLimit) {
+return interaction.reply({
+content:
+"❌ The server has reached its open ticket limit (" +
+ticketLimit +
+"). Please wait until a ticket is closed.",
+ephemeral: true
+});
+}
+
+const ticketNumber =
+Number(data.ticketCounters[guild.id] || 0) + 1;
+
 const ticket =
 await guild.channels.create({
 name:
-"ticket-" +
-safeName,
+ticketNumber + "-" + safeName,
+
+topic:
+"PRLNGZZ_TICKET:" + interaction.user.id,
 
 type:
 ChannelType.GuildText,
@@ -1532,6 +2111,12 @@ PermissionsBitField
 ]
 });
 
+data.ticketCounters[guild.id] = ticketNumber;
+
+saveData();
+
+await updateOrderCounters(guild);
+
 const row =
 new ActionRowBuilder()
 .addComponents(
@@ -1554,7 +2139,7 @@ content:
 "Welcome " +
 interaction.user.toString() +
 "!\n\n" +
-"Explain your issue here.\n" +
+"Please let us know what you want, individual items are free and multiple items require 1 skincase.\n\n" +
 "Click **Close Ticket** when finished.",
 
 components: [row]
@@ -1573,6 +2158,22 @@ if (
 interaction.customId ===
 "close_ticket"
 ) {
+if (
+interaction.channel.topic &&
+interaction.channel.topic.startsWith(
+"PRLNGZZ_TICKET:"
+)
+) {
+const guildId = interaction.guild.id;
+
+data.finishedOrders[guildId] =
+Number(data.finishedOrders[guildId] || 0) + 1;
+
+saveData();
+
+await updateOrderCounters(interaction.guild);
+}
+
 await interaction.reply(
 "🔒 Closing ticket in 5 seconds..."
 );
@@ -1581,9 +2182,10 @@ setTimeout(
 function () {
 interaction.channel
 .delete()
-.catch(
-function () {}
-);
+.catch(function () {})
+.finally(function () {
+updateOrderCounters(interaction.guild).catch(function () {});
+});
 },
 5000
 );
